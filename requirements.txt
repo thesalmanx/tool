@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+plotly
+fuzzywuzzy
+python-dotenv
+requests
+tqdm
+openpyxl
+scikit-learn
+python-Levenshtein
