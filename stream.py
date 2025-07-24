@@ -4,13 +4,14 @@ import pandas as pd
 import os
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv
 import hashlib # For password hashing
 import subprocess # To run background tasks
 import time # To add delays for auto-refresh
+import uuid # For session tokens
 
 # Load environment variables
 load_dotenv()
@@ -29,6 +30,7 @@ ROLES = ["user", "admin", "super_admin"]
 STATUS_FILE = "scraping_status.json"
 LOG_FILE = "scraping.log"
 STOP_FILE = "stop_scraping.json" # New: File to signal stopping the pipeline
+SESSION_FILE = "user_sessions.json" # For persistent sessions
 
 
 # --- Database Initialization and Management ---
@@ -64,6 +66,186 @@ def init_db():
                 pass
 
 
+# --- Session Management Functions ---
+def create_session_token():
+    """Create a unique session token."""
+    return str(uuid.uuid4())
+
+def save_session(username, user_role, user_id):
+    """Save session to file and return session token."""
+    session_token = create_session_token()
+    session_data = {
+        "username": username,
+        "user_role": user_role,
+        "user_id": user_id,
+        "created_at": datetime.now().isoformat(),
+        "expires_at": (datetime.now() + timedelta(hours=24)).isoformat()  # 24 hour expiry
+    }
+
+    # Load existing sessions
+    sessions = {}
+    if os.path.exists(SESSION_FILE):
+        try:
+            with open(SESSION_FILE, 'r') as f:
+                sessions = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            sessions = {}
+
+    # Add new session
+    sessions[session_token] = session_data
+
+    # Clean up expired sessions
+    current_time = datetime.now()
+    sessions = {token: data for token, data in sessions.items()
+                if datetime.fromisoformat(data['expires_at']) > current_time}
+
+    # Save sessions
+    with open(SESSION_FILE, 'w') as f:
+        json.dump(sessions, f, indent=4)
+
+    return session_token
+
+def load_session(session_token):
+    """Load session data from token."""
+    if not session_token or not os.path.exists(SESSION_FILE):
+        return None
+
+    try:
+        with open(SESSION_FILE, 'r') as f:
+            sessions = json.load(f)
+
+        if session_token not in sessions:
+            return None
+
+        session_data = sessions[session_token]
+
+        # Check if session is expired
+        if datetime.fromisoformat(session_data['expires_at']) <= datetime.now():
+            # Remove expired session
+            del sessions[session_token]
+            with open(SESSION_FILE, 'w') as f:
+                json.dump(sessions, f, indent=4)
+            return None
+
+        return session_data
+
+    except (json.JSONDecodeError, FileNotFoundError, KeyError):
+        return None
+
+def delete_session(session_token):
+    """Delete a session token."""
+    if not session_token or not os.path.exists(SESSION_FILE):
+        return
+
+    try:
+        with open(SESSION_FILE, 'r') as f:
+            sessions = json.load(f)
+
+        if session_token in sessions:
+            del sessions[session_token]
+            with open(SESSION_FILE, 'w') as f:
+                json.dump(sessions, f, indent=4)
+
+    except (json.JSONDecodeError, FileNotFoundError):
+        pass
+
+def get_browser_session_id():
+    """Get a unique browser session identifier."""
+    # Use Streamlit's session ID if available
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx()
+        if ctx:
+            return ctx.session_id
+    except:
+        pass
+
+    # Fallback: create a session ID based on timestamp and store in session state
+    if 'browser_session_id' not in st.session_state:
+        st.session_state['browser_session_id'] = str(uuid.uuid4())
+
+    return st.session_state['browser_session_id']
+
+def get_persistent_session_file():
+    """Get the path to the persistent session file for this browser session."""
+    browser_id = get_browser_session_id()
+    return f"session_{browser_id}.json"
+
+def save_persistent_session(username, user_role, user_id):
+    """Save session data to a persistent file."""
+    session_file = get_persistent_session_file()
+    session_data = {
+        "username": username,
+        "user_role": user_role,
+        "user_id": user_id,
+        "created_at": datetime.now().isoformat(),
+        "expires_at": (datetime.now() + timedelta(hours=24)).isoformat()
+    }
+
+    try:
+        with open(session_file, 'w') as f:
+            json.dump(session_data, f, indent=4)
+        return True
+    except Exception as e:
+        st.error(f"Failed to save session: {e}")
+        return False
+
+def load_persistent_session():
+    """Load session data from persistent file."""
+    session_file = get_persistent_session_file()
+
+    if not os.path.exists(session_file):
+        return None
+
+    try:
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+
+        # Check if session is expired
+        if datetime.fromisoformat(session_data['expires_at']) <= datetime.now():
+            os.remove(session_file)
+            return None
+
+        return session_data
+    except Exception as e:
+        # Remove corrupted session file
+        try:
+            os.remove(session_file)
+        except:
+            pass
+        return None
+
+def clear_persistent_session():
+    """Clear the persistent session file."""
+    session_file = get_persistent_session_file()
+    try:
+        if os.path.exists(session_file):
+            os.remove(session_file)
+    except Exception:
+        pass
+
+def cleanup_old_sessions():
+    """Clean up expired session files."""
+    try:
+        current_time = datetime.now()
+        for filename in os.listdir('.'):
+            if filename.startswith('session_') and filename.endswith('.json'):
+                try:
+                    with open(filename, 'r') as f:
+                        session_data = json.load(f)
+
+                    # Check if session is expired
+                    if datetime.fromisoformat(session_data['expires_at']) <= current_time:
+                        os.remove(filename)
+                except Exception:
+                    # Remove corrupted session files
+                    try:
+                        os.remove(filename)
+                    except:
+                        pass
+    except Exception:
+        pass
+
 # --- Authentication Functions ---
 def hash_password(password):
     """Hashes a password using SHA256."""
@@ -98,10 +280,15 @@ def login_user(username, password):
             user_id, db_username, db_password_hash, role, status = user_data
             if verify_password(password, db_password_hash):
                 if status == 'active':
+                    # Save persistent session
+                    save_persistent_session(db_username, role, user_id)
+
+                    # Set session state
                     st.session_state['logged_in'] = True
                     st.session_state['username'] = db_username
                     st.session_state['user_role'] = role
                     st.session_state['user_id'] = user_id
+
                     return True, "Login successful!"
                 elif status == 'pending':
                     return False, "Your account is pending admin approval."
@@ -114,11 +301,30 @@ def login_user(username, password):
 
 def logout_user():
     """Logs out the current user."""
-    for key in ['logged_in', 'username', 'user_role', 'user_id']:
+    # Clear persistent session
+    clear_persistent_session()
+
+    # Clear session state
+    for key in ['logged_in', 'username', 'user_role', 'user_id', 'browser_session_id']:
         if key in st.session_state:
             del st.session_state[key]
+
     st.success("You have been logged out.")
     st.rerun()
+
+def restore_session_if_available():
+    """Restore session from persistent storage if available."""
+    session_data = load_persistent_session()
+
+    if session_data:
+        # Restore session state
+        st.session_state['logged_in'] = True
+        st.session_state['username'] = session_data['username']
+        st.session_state['user_role'] = session_data['user_role']
+        st.session_state['user_id'] = session_data['user_id']
+        return True
+
+    return False
 
 # --- Role-based Access Control (RBAC) ---
 def is_logged_in():
@@ -303,7 +509,36 @@ def get_scraping_status():
         return {"status": "idle", "last_success_date": None, "progress": 0} # New: Default progress to 0
     try:
         with open(STATUS_FILE, 'r') as f:
-            return json.load(f)
+            status_data = json.load(f)
+
+        # Check if process is actually running by verifying PID
+        if status_data.get('status') == 'running':
+            if os.path.exists("scraping_pid.json"):
+                try:
+                    with open("scraping_pid.json", "r") as f:
+                        pid_data = json.load(f)
+                        stored_pid = pid_data.get("pid")
+
+                    if stored_pid:
+                        try:
+                            import psutil
+                            proc = psutil.Process(stored_pid)
+                            if not proc.is_running():
+                                # Process is not running, update status
+                                status_data['status'] = 'failed'
+                                status_data['error'] = 'Process terminated unexpectedly'
+                                with open(STATUS_FILE, 'w') as f:
+                                    json.dump(status_data, f, indent=4)
+                        except (psutil.NoSuchProcess, ImportError):
+                            # Process doesn't exist, update status
+                            status_data['status'] = 'failed'
+                            status_data['error'] = 'Process not found'
+                            with open(STATUS_FILE, 'w') as f:
+                                json.dump(status_data, f, indent=4)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+
+        return status_data
     except (json.JSONDecodeError, FileNotFoundError):
         return {"status": "unknown", "last_success_date": None, "error": "Status file is corrupted or missing.", "progress": 0}
 
@@ -314,10 +549,40 @@ def read_log_file():
     with open(LOG_FILE, 'r') as f:
         return f.read()
 
+def can_user_stop_scraping():
+    """Check if the current user can stop the running scraping process."""
+    current_user = st.session_state.get('username')
+    current_role = st.session_state.get('user_role')
+
+    # Super admins can always stop any scraping
+    if current_role == 'super_admin':
+        return True, "Super admin privileges"
+
+    # Check if the current user started the scraping
+    if os.path.exists("scraping_pid.json"):
+        try:
+            with open("scraping_pid.json", "r") as f:
+                pid_data = json.load(f)
+                started_by_user = pid_data.get("started_by_user")
+
+            if started_by_user == current_user:
+                return True, f"Process started by you ({current_user})"
+            else:
+                return False, f"Process started by {started_by_user}. Only they or a super admin can stop it."
+
+        except (FileNotFoundError, json.JSONDecodeError):
+            # If we can't read the file, allow admins to stop
+            if current_role == 'admin':
+                return True, "Unable to verify starter, allowing admin access"
+
+    return False, "You don't have permission to stop this process"
+
 def manage_data_scraping():
     """UI for managing the data scraping task."""
     st.subheader("Data Scraping Management")
 
+    # Add a note about session persistence
+    
     status_data = get_scraping_status()
     status = status_data.get('status', 'idle')
     last_success = status_data.get('last_success_date')
@@ -329,11 +594,57 @@ def manage_data_scraping():
     else:
         st.info("**Last Successful Scrape:** Never")
 
-    st.write(f"**Current Status:** `{status.capitalize()}`")
+    # Show current status with timestamp
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.write(f"**Current Status:** `{status.capitalize()}`")
+    with col2:
+        current_time = datetime.now().strftime("%H:%M:%S")
+        st.write(f"**Last Updated:** {current_time}")
+
+        # Show auto-refresh indicator if enabled
+        if status == 'running' and st.session_state.get('auto_refresh_logs', True):
+            st.write("🔄 *Auto-refreshing*")
+
+    # Show process information if running
+    if status == 'running' and os.path.exists("scraping_pid.json"):
+        try:
+            with open("scraping_pid.json", "r") as f:
+                pid_data = json.load(f)
+                process_pid = pid_data.get("pid")
+                started_at = pid_data.get("started_at")
+                started_by_user = pid_data.get("started_by_user")
+                started_by_role = pid_data.get("started_by_role")
+
+            # Create info columns
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if process_pid:
+                    st.info(f"🔧 **Scraping ID:** {process_pid}")
+                if started_at:
+                    start_time = datetime.fromisoformat(started_at)
+                    st.info(f"⏰ **Started:** {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            with col2:
+                if started_by_user:
+                    st.info(f"👤 **Started by:** {started_by_user}")
+                if started_by_role:
+                    st.info(f"🎭 **Role:** {started_by_role.replace('_', ' ').title()}")
+
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
 
     if status == 'running':
-        st.warning("A scraping task is currently in progress. Please wait for it to complete.")
         message = status_data.get('message', 'Running...')
+
+        # Check if it's in stopping state
+        if 'stopping' in message.lower() or 'stop' in message.lower():
+            st.warning("⏹️ **Stopping scraping task...** Please wait for the process to halt gracefully.")
+            st.info("The pipeline will stop at the next safe checkpoint.")
+        else:
+            st.success("✅ **Scraping is running**")
+
         st.write(f"**Current Step:** {message}")
         st.progress(progress / 100.0, text=f"Progress: {progress:.1f}%") # New: Display progress bar
     elif status == 'failed':
@@ -345,6 +656,42 @@ def manage_data_scraping():
         message = status_data.get('message', 'Stopped.')
         st.write(f"**Status Message:** {message}")
 
+    # CSV Download Section
+    st.markdown("---")
+    st.subheader("📥 Download Final Dataset")
+
+    # Check if final CSV file exists
+    final_csv_path = "partners8_final_data.csv"
+    if os.path.exists(final_csv_path):
+        try:
+            # Read the CSV file
+            with open(final_csv_path, 'r', encoding='utf-8') as f:
+                csv_data = f.read()
+
+            # Get file info
+            file_size = os.path.getsize(final_csv_path)
+            file_size_mb = file_size / (1024 * 1024)
+
+            # Count rows (subtract 1 for header)
+            row_count = len(csv_data.split('\n')) - 1
+
+            st.info(f"**Dataset Info:** {row_count:,} records | {file_size_mb:.2f} MB")
+
+            # Download button
+            st.download_button(
+                label="📥 Download Complete Dataset (CSV)",
+                data=csv_data,
+                file_name=f"partners8_complete_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_complete_csv_button",
+                help="Download the complete scraped real estate dataset",
+                use_container_width=True
+            )
+
+        except Exception as e:
+            st.error(f"Error reading CSV file: {e}")
+    else:
+        st.warning("No final dataset available. Please run a successful scrape first.")
 
     col_buttons = st.columns(2)
     with col_buttons[0]:
@@ -355,37 +702,203 @@ def manage_data_scraping():
                 # Ensure the stop file is removed before starting a new scrape
                 if os.path.exists(STOP_FILE):
                     os.remove(STOP_FILE)
-                # Run main.py as a separate process
-                subprocess.Popen(["python3", "main.py"])
-                time.sleep(2) # Give it a moment to start and update status
+
+                # Run main.py as a completely separate background process
+                # Using shell=False and detaching from parent process
+                process = subprocess.Popen(
+                    ["python", "main.py"],
+                    stdout=subprocess.DEVNULL,  # Don't capture stdout
+                    stderr=subprocess.DEVNULL,  # Don't capture stderr
+                    stdin=subprocess.DEVNULL,   # Don't provide stdin
+                    start_new_session=True,     # Start in new session (Unix)
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0  # Windows compatibility
+                )
+
+                # Store the process ID and user info for later termination
+                pid_data = {
+                    "pid": process.pid,
+                    "started_at": datetime.now().isoformat(),
+                    "started_by_user": st.session_state.get('username'),
+                    "started_by_role": st.session_state.get('user_role')
+                }
+                with open("scraping_pid.json", "w") as f:
+                    json.dump(pid_data, f)
+
+                st.success(f"✅ Background scraping started! Process ID: {process.pid}")
+                st.info("💡 The scraping is now running independently. You can close this browser tab and the scraping will continue.")
+
+                time.sleep(1) # Brief pause for UI update
                 st.rerun()
             except Exception as e:
                 st.error(f"Failed to start scraping process: {e}")
-    
+
     with col_buttons[1]:
-        # New: Stop button for Super Admin
-        if has_role('super_admin'):
-            if st.button("Stop Scrape", disabled=(status != 'running'), type="secondary", key="stop_scrape_button"):
+        # Stop button with permission checking
+        can_stop, stop_reason = can_user_stop_scraping()
+
+        if can_stop:
+            if st.button("🛑 Stop Scrape", disabled=(status != 'running'), type="secondary", key="stop_scrape_button", help="Immediately kill the running scraping process"):
                 try:
                     # Create the stop signal file
                     with open(STOP_FILE, 'w') as f:
-                        json.dump({"stop": True, "requested_at": datetime.now().isoformat()}, f)
-                    st.toast("🛑 Stop signal sent. The pipeline will halt shortly.")
-                    time.sleep(1) # Give it a moment to register
+                        json.dump({
+                            "stop": True,
+                            "requested_at": datetime.now().isoformat(),
+                            "requested_by": st.session_state.get('username'),
+                            "reason": stop_reason
+                        }, f)
+
+                    # Try to kill the process immediately using multiple methods
+                    killed_processes = 0
+
+                    # Method 1: Try to kill using stored PID first (most targeted)
+                    try:
+                        if os.path.exists("scraping_pid.json"):
+                            with open("scraping_pid.json", "r") as f:
+                                pid_data = json.load(f)
+                                stored_pid = pid_data.get("pid")
+
+                            if stored_pid:
+                                import psutil
+                                try:
+                                    proc = psutil.Process(stored_pid)
+                                    if proc.is_running():
+                                        proc.terminate()  # Try graceful termination first
+                                        try:
+                                            proc.wait(timeout=2)  # Wait up to 2 seconds
+                                        except psutil.TimeoutExpired:
+                                            proc.kill()  # Force kill if graceful termination fails
+                                        killed_processes += 1
+                                        print(f"Killed stored scraping process PID: {stored_pid}")
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                    pass
+
+                            # Clean up the PID file
+                            os.remove("scraping_pid.json")
+                    except (FileNotFoundError, json.JSONDecodeError, ImportError):
+                        pass
+
+                    # Method 2: Use psutil to find and kill any remaining Python processes running main.py
+                    try:
+                        import psutil
+                        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                            try:
+                                if proc.info['name'] == 'python' and proc.info['cmdline']:
+                                    cmdline = ' '.join(proc.info['cmdline'])
+                                    if 'main.py' in cmdline:
+                                        proc.terminate()  # Try graceful termination first
+                                        try:
+                                            proc.wait(timeout=2)  # Wait up to 2 seconds
+                                        except psutil.TimeoutExpired:
+                                            proc.kill()  # Force kill if graceful termination fails
+                                        killed_processes += 1
+                                        print(f"Killed scraping process PID: {proc.info['pid']}")
+                            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                                pass
+
+                    except ImportError:
+                        pass
+
+                    # Method 3: Use subprocess as backup to kill any remaining processes
+                    try:
+                        # Kill any python processes with main.py in command line (Linux/Mac)
+                        result = subprocess.run(['pkill', '-f', 'python.*main.py'],
+                                              capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            killed_processes += 1
+                    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                        pass
+
+                    # Provide feedback based on results
+                    if killed_processes > 0:
+                        st.success(f"🛑 **Process terminated immediately!** Killed {killed_processes} scraping process(es).")
+                        st.info("✅ The scraping has been stopped forcefully.")
+                    else:
+                        st.warning("🛑 **Stop signal sent!** No active scraping processes found to kill.")
+                        st.info("💡 The process may have already finished or stopped.")
+
+                    # Update status to stopped
+                    status_data = {"status": "stopped", "message": "Process stopped by user", "updated_at": datetime.now().isoformat()}
+                    with open(STATUS_FILE, 'w') as f:
+                        json.dump(status_data, f, indent=4)
+
+                    time.sleep(1) # Brief pause for UI update
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to send stop signal: {e}")
+                    st.error(f"Failed to stop process: {e}")
+        else:
+            # Show why the user can't stop the scraping
+            if status == 'running':
+                st.warning(f"🔒 **Cannot stop scraping:** {stop_reason}")
 
-    # Live Log Viewer
+                # Show additional info about permissions
+                current_role = st.session_state.get('user_role')
+                if current_role == 'admin':
+                    st.info("� **Admin Note:** You can only stop scraping processes that you started, or ask a Super Admin to stop it.")
+                elif current_role == 'user':
+                    st.info("💡 **User Note:** Only Admins and Super Admins can manage scraping processes.")
+            else:
+                st.info("🔒 Only users who started the scraping (or Super Admins) can stop it.")
+
+    # Live Log Viewer with Auto-refresh
     with st.expander("Live Log Viewer", expanded=(status == 'running')):
-        log_placeholder = st.empty()
-        log_content = read_log_file()
-        log_placeholder.code(log_content, language="log")
+        if status == 'running':
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("🔄 Refresh Logs", key="refresh_logs_button", use_container_width=True):
+                    st.rerun()
 
-    # Auto-refresh logic when a task is running
+            with col2:
+                auto_refresh_logs = st.checkbox("🔄 Auto-refresh logs", value=True, key="auto_refresh_logs",
+                                              help="Automatically refresh logs every 4 seconds")
+
+        log_placeholder = st.empty()
+
+        def update_log_display():
+            log_content = read_log_file()
+            # Show last 50 lines of log to avoid UI overload
+            log_lines = log_content.split('\n')
+            if len(log_lines) > 50:
+                log_content = '\n'.join(log_lines[-50:])
+                log_content = "... (showing last 50 lines) ...\n" + log_content
+
+            log_placeholder.code(log_content, language="log")
+
+        # Initial log display
+        update_log_display()
+
+        # Auto-refresh logs if enabled and scraping is running
+        if status == 'running' and auto_refresh_logs:
+            # Initialize auto-refresh timer
+            if 'auto_refresh_start_time' not in st.session_state:
+                st.session_state.auto_refresh_start_time = time.time()
+
+            elapsed_time = time.time() - st.session_state.auto_refresh_start_time
+
+            # Auto-refresh every 4 seconds
+            if elapsed_time >= 4:
+                st.session_state.auto_refresh_start_time = time.time()
+                st.rerun()
+            else:
+                remaining_time = 4 - int(elapsed_time)
+                progress_percentage = (elapsed_time / 4.0) * 100
+
+                
+
+    # Manual refresh section
     if status == 'running':
-        time.sleep(5) # Refresh every 5 seconds
-        st.rerun()
+        st.markdown("---")
+        st.subheader("🔄 Status Updates")
+
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("🔄 Refresh Status", key="manual_refresh_button", type="primary", use_container_width=True):
+                st.rerun()
+
+        with col2:
+            st.info("💡 **Tip:** Enable auto-refresh in the log viewer above for automatic updates")
+
+
 
 # --- Main Application Logic (from original stream.py, adapted) ---
 class StreamlitSQLQuery:
@@ -499,79 +1012,121 @@ class StreamlitSQLQuery:
             description = column_descriptions.get(col_name, 'Real estate data field')
             schema_text += f"- {col_name} ({col_type}): {description}\n"
         
-        schema_text += "\nIMPORTANT NOTES:\n"
-        schema_text += "1. Use SQLite syntax\n"
-        schema_text += "2. All monetary values are in USD\n"
-        schema_text += "3. State codes are 2-letter abbreviations\n"
-        schema_text += "4. NULL values may exist in any column\n"
-        schema_text += "5. Ratios are decimal values (e.g., 0.01 = 1%)\n"
+        schema_text += f"\nDATABASE STATISTICS:\n"
+        schema_text += f"- Total records: {self.database_schema['total_rows']:,}\n"
+        schema_text += f"- Contains real estate data for US cities\n\n"
+
+        schema_text += "IMPORTANT NOTES:\n"
+        schema_text += "1. Use SQLite syntax only\n"
+        schema_text += "2. All monetary values are in USD (rent/value prices)\n"
+        schema_text += "3. State codes are 2-letter abbreviations (CA, TX, NY, etc.)\n"
+        schema_text += "4. NULL values may exist - use IS NULL/IS NOT NULL appropriately\n"
+        schema_text += "5. Ratios are decimal values (0.01 = 1%, 0.1 = 10%)\n"
         schema_text += "6. Only query the 'partners8_data' table\n"
-        schema_text += "7. Use proper WHERE clauses for filtering\n"
-        schema_text += "8. Consider using LIMIT for large result sets\n"
+        schema_text += "7. For columns with spaces like 'ZH Ratio', use double quotes: \"ZH Ratio\"\n"
+        schema_text += "8. Use LIMIT for large result sets (default 100)\n"
+        schema_text += "9. This database contains ONLY real estate pricing data - no demographics, crime, schools, etc.\n"
+        schema_text += "10. Available data: rent prices, home values, income limits, rent-to-value ratios, city/state info\n"
         
         return schema_text
     
     def natural_language_to_sql(self, user_question):
         """Convert natural language question to SQL query using Gemini"""
         schema_prompt = self.create_schema_prompt()
-        
+
         prompt = f"""
 {schema_prompt}
 
 USER QUESTION: "{user_question}"
 
-Please convert this natural language question into a valid SQLite SQL query for the partners8_data table.
+You are an expert SQL query generator for real estate data analysis. Convert this natural language question into a valid SQLite SQL query.
 
-REQUIREMENTS:
-1. Generate ONLY the SQL query, no explanations or markdown
-2. Use proper SQLite syntax
-3. Include appropriate WHERE clauses if filtering is needed
-4. Use ORDER BY and LIMIT when appropriate
-5. Handle potential NULL values properly
-6. Make sure column names match exactly (case-sensitive, and use double quotes for columns with spaces like "ZH Ratio")
-7. Start directly with SELECT
+CRITICAL REQUIREMENTS:
+1. Generate ONLY the SQL query, no explanations, comments, or markdown formatting
+2. Use proper SQLite syntax with correct column names from the schema above
+3. For columns with spaces (like "ZH Ratio", "NH Ratio"), use double quotes: "ZH Ratio"
+4. Handle NULL values appropriately using IS NULL or IS NOT NULL
+5. Use LIMIT clause for large result sets (default LIMIT 100 unless user specifies otherwise)
+6. Use proper ORDER BY for meaningful sorting (e.g., highest to lowest values)
+7. For price/value comparisons, use appropriate numeric operators (>, <, >=, <=, BETWEEN)
+8. For text searches, use LIKE with wildcards (%) for partial matches
+9. State codes should be uppercase (CA, TX, NY, etc.)
+10. Start directly with SELECT - no preamble
 
-Generate a complete, executable SQL query:
+QUERY OPTIMIZATION GUIDELINES:
+- For "top N" queries, use ORDER BY DESC LIMIT N
+- For "cheapest/most affordable", order by price ASC
+- For "most expensive", order by price DESC
+- For ratio analysis, exclude NULL values: WHERE column IS NOT NULL
+- For state comparisons, use IN ('STATE1', 'STATE2') for multiple states
+- For city searches, use LIKE '%cityname%' for partial matches
+
+COMMON PATTERNS:
+- Top expensive cities: SELECT RegionName, State, ZMediumValue FROM partners8_data WHERE ZMediumValue IS NOT NULL ORDER BY ZMediumValue DESC LIMIT 10
+- Cities in specific state: WHERE State = 'CA'
+- Rent-to-value analysis: WHERE ZillowRatio IS NOT NULL ORDER BY ZillowRatio DESC
+- Income limit analysis: WHERE IncomeLimits IS NOT NULL
+
+Generate the complete, executable SQL query:
 """
-        
+
         try:
             response_text = self.call_gemini_api(prompt)
             sql_query = self.clean_sql_query(response_text)
             return sql_query
-            
+
         except Exception as e:
             st.error(f"❌ Error generating SQL query: {e}")
             return None
     
     def get_corrected_sql_query(self, user_question, sql_query, error_message):
-        """Ask Gemini to correct the SQL query"""
+        """Ask Gemini to correct the SQL query with enhanced error analysis"""
         schema_prompt = self.create_schema_prompt()
-        
+
         prompt = f"""
 {schema_prompt}
 
 USER QUESTION: "{user_question}"
 
-The following SQL query failed:
+FAILED SQL QUERY:
 {sql_query}
 
 ERROR MESSAGE:
 {error_message}
 
-Please correct the SQL query.
-- Return ONLY the corrected SQL query.
-- Do not add any explanations or markdown.
-- Ensure the query is valid SQLite.
-- Make sure to use the correct column names from the schema (e.g., "ZH Ratio").
-- If a column name has a space, enclose it in double quotes, like "ZH Ratio".
+You are an expert SQL debugger. Analyze the error and generate a corrected SQLite query.
+
+ERROR ANALYSIS GUIDELINES:
+1. If "no such column" error: Check the exact column names in the schema above and use correct spelling/capitalization
+2. If column has spaces (like "ZH Ratio", "NH Ratio"): Use double quotes around the column name
+3. If syntax error: Fix SQL syntax issues (missing commas, incorrect operators, etc.)
+4. If data type error: Ensure proper data type handling (numbers vs strings)
+5. If the original query was asking for non-existent data: Modify to use available columns
+
+CORRECTION REQUIREMENTS:
+- Generate ONLY the corrected SQL query, no explanations
+- Use exact column names from the schema (case-sensitive)
+- For columns with spaces, use double quotes: "ZH Ratio", "NH Ratio"
+- Ensure proper SQLite syntax
+- Include appropriate NULL handling where needed
+- Add reasonable LIMIT clause if missing (default 100)
+- Use proper ORDER BY for meaningful results
+
+COMMON FIXES:
+- Replace incorrect column names with correct ones from schema
+- Add double quotes around spaced column names
+- Fix WHERE clause syntax
+- Ensure proper JOIN syntax if needed
+- Handle NULL values appropriately
+
+Generate the corrected SQL query:
 """
-        
+
         try:
             response_text = self.call_gemini_api(prompt)
             corrected_query = self.clean_sql_query(response_text)
             return corrected_query
         except Exception as e:
-            st.error(f"❌ Error getting corrected SQL query: {e}")
             return None
 
     def clean_sql_query(self, sql_query):
@@ -600,29 +1155,158 @@ Please correct the SQL query.
         
         return sql_query
 
+    def extract_missing_column(self, error_message):
+        """Extract the missing column name from SQLite error message"""
+        try:
+            # SQLite error format: "no such column: column_name"
+            if "no such column:" in error_message:
+                return error_message.split("no such column:")[1].strip()
+            return None
+        except:
+            return None
+
+    def explain_empty_results(self, user_question, sql_query):
+        """Generate explanation for why a query returned no results"""
+        schema_prompt = self.create_schema_prompt()
+
+        prompt = f"""
+{schema_prompt}
+
+USER QUESTION: "{user_question}"
+SQL QUERY: {sql_query}
+
+The query executed successfully but returned no results. Analyze why this might have happened and provide a helpful explanation in natural language.
+
+Consider these common reasons:
+1. The search criteria might be too specific or restrictive
+2. The requested data might not exist in the database
+3. Column values might be NULL for the requested filters
+4. State codes or city names might be misspelled or not in the database
+5. Numeric ranges might be outside the available data range
+
+Provide a concise, helpful explanation (1-2 sentences) that suggests what the user could try instead. Focus on what data IS available rather than what isn't.
+"""
+
+        try:
+            response_text = self.call_gemini_api(prompt)
+            return response_text.strip()
+        except Exception:
+            return "The search criteria might be too specific. Try broadening your search or checking for typos in city/state names."
+
+    def validate_and_suggest(self, user_question):
+        """Validate user question and provide suggestions if it seems problematic"""
+        schema_prompt = self.create_schema_prompt()
+
+        # Check for common issues that might lead to no results
+        question_lower = user_question.lower()
+
+        # List of data types we don't have
+        unavailable_data = [
+            'population', 'demographics', 'crime', 'schools', 'weather', 'employment',
+            'transportation', 'hospitals', 'restaurants', 'shopping', 'parks',
+            'property tax', 'mortgage rates', 'construction', 'permits'
+        ]
+
+        # Check if user is asking for unavailable data
+        for unavailable in unavailable_data:
+            if unavailable in question_lower:
+                return {
+                    'valid': False,
+                    'suggestion': f"I don't have {unavailable} data. However, I can help you with rent prices, home values, income limits, and rent-to-value ratios. Try asking about these instead!"
+                }
+
+        # Use AI to validate the question
+        prompt = f"""
+{schema_prompt}
+
+USER QUESTION: "{user_question}"
+
+Analyze if this question can be answered using the available database schema above.
+
+Return ONLY one of these responses:
+1. "VALID" - if the question can be answered with available data
+2. "INVALID: [brief explanation]" - if the question asks for data not in the schema
+
+Focus on whether the requested information exists in the database columns.
+"""
+
+        try:
+            response_text = self.call_gemini_api(prompt)
+            response_text = response_text.strip()
+
+            if response_text.startswith("VALID"):
+                return {'valid': True, 'suggestion': None}
+            elif response_text.startswith("INVALID"):
+                suggestion = response_text.replace("INVALID:", "").strip()
+                return {
+                    'valid': False,
+                    'suggestion': f"{suggestion} Try asking about rent prices, home values, income limits, or city/state comparisons instead."
+                }
+            else:
+                return {'valid': True, 'suggestion': None}
+
+        except Exception:
+            return {'valid': True, 'suggestion': None}
+
     def execute_sql_query(self, user_question, sql_query):
-        """Execute the SQL query and return results"""
+        """Execute the SQL query and return results with enhanced error handling"""
         try:
             with sqlite3.connect(DATABASE_FILE) as conn:
                 df = pd.read_sql_query(sql_query, conn)
+
+                # Check if results are empty and provide helpful feedback
+                if len(df) == 0:
+                    explanation = self.explain_empty_results(user_question, sql_query)
+                    st.warning("🔍 No results found for your query.")
+                    st.info(f"💡 **Possible reasons:** {explanation}")
+
                 return df
+
         except Exception as e:
-            st.warning(f"Initial query failed: {e}. Attempting to correct...")
-            
+            error_message = str(e).lower()
+
+            # Provide user-friendly error explanations
+            if "no such column" in error_message:
+                st.warning("🔍 The query references a column that doesn't exist in our database.")
+                missing_column = self.extract_missing_column(str(e))
+                if missing_column:
+                    st.info(f"💡 **Issue:** The column '{missing_column}' is not available. Please check the available columns in the sidebar or try rephrasing your question.")
+            elif "syntax error" in error_message:
+                st.warning("🔍 There's a syntax issue with the generated query.")
+                st.info("💡 **Issue:** The AI generated an invalid SQL query. Let me try to fix it...")
+            else:
+                st.warning(f"🔍 Query execution failed: {e}")
+                st.info("💡 **Issue:** There was a problem executing your query. Let me try to correct it...")
+
+            # Attempt to get a corrected query
             corrected_query = self.get_corrected_sql_query(user_question, sql_query, str(e))
-            
-            if corrected_query:
-                st.info("Corrected SQL Query:")
+
+            if corrected_query and corrected_query != sql_query:
+                st.info("🔧 **Attempting to fix the query...**")
                 st.code(corrected_query, language="sql")
                 try:
                     with sqlite3.connect(DATABASE_FILE) as conn:
                         df = pd.read_sql_query(corrected_query, conn)
+
+                        if len(df) == 0:
+                            explanation = self.explain_empty_results(user_question, corrected_query)
+                            st.warning("🔍 The corrected query executed successfully but returned no results.")
+                            st.info(f"💡 **Possible reasons:** {explanation}")
+                        else:
+                            st.success("✅ **Query corrected successfully!**")
+
                         return df
+
                 except Exception as e2:
-                    st.error(f"❌ Error executing corrected SQL query: {e2}")
+                    st.error("❌ **Unable to fix the query automatically.**")
+                    st.info("💡 **Suggestion:** Try rephrasing your question or asking for something more specific. For example:")
+                    st.info("• Instead of asking about data we don't have, ask about cities, states, rent prices, or home values")
+                    st.info("• Be more specific about locations (e.g., 'California cities' instead of just 'cities')")
+                    st.info("• Ask for comparisons using available data columns")
                     return None
             else:
-                st.error("Failed to get a corrected query.")
+                st.error("❌ **Unable to generate a corrected query.**")
+                st.info("💡 **Suggestion:** Please try rephrasing your question using simpler terms or ask about the available data shown in the sidebar.")
                 return None
     
     def summarize_results(self, user_question, sql_query, results_df):
@@ -700,12 +1384,16 @@ def main_app_content():
         
         st.header("🔍 Example Questions")
         examples = [
-            "What are the top 10 most expensive cities?",
-            "Show me cities in California with high rent-to-value ratios",
-            "Which states have the lowest income limits?",
-            "Find cities where median rent is above $3000",
-            "Compare rent prices between Texas and Florida",
-            "Show me the most affordable cities for families"
+            "What are the top 10 most expensive cities by home value?",
+            "Show me California cities with rent above $2500",
+            "Which states have the lowest HUD income limits?",
+            "Find cities where Zillow median rent is above $3000",
+            "Compare median home values between Texas and Florida",
+            "Show me cities with the best rent-to-value ratios",
+            "What are the most affordable cities in New York state?",
+            "Find cities where 4-bedroom HUD rent is under $1500",
+            "Show me the highest rent cities in each state",
+            "Which cities have the biggest difference between Zillow and NAR home values?"
         ]
         
         # Initialize user_question in session_state if not present
@@ -719,11 +1407,25 @@ def main_app_content():
         
         st.header("📋 Available Data")
         st.info("""
+        **✅ What you CAN ask about:**
         • Zillow rent and home values
-        • HUD Fair Market Rents
-        • Income limits by area
+        • HUD Fair Market Rents (by bedroom count)
+        • Income limits by area (HUD data)
         • Rent-to-value ratios
-        • City, county, and state data
+        • City, county, and state information
+        • Price comparisons between locations
+        • Rankings and top/bottom lists
+        """)
+
+        st.warning("""
+        **❌ What we DON'T have:**
+        • Population or demographics
+        • Crime rates or safety data
+        • School ratings or education data
+        • Employment or job market data
+        • Weather or climate information
+        • Transportation or infrastructure
+        • Property taxes or mortgage rates
         """)
     
     col1, col2 = st.columns([3, 1])
@@ -743,16 +1445,38 @@ def main_app_content():
     
     if analyze_button and user_question:
         with st.spinner("🤔 Processing your question..."):
-            st.subheader("📝 Generated SQL Query")
+            # First, validate the question
+            validation = query_tool.validate_and_suggest(user_question)
+
+            if not validation['valid']:
+                st.warning("🔍 **Question Analysis**")
+                st.info(f"💡 {validation['suggestion']}")
+                st.info("**Try asking about:**")
+                st.info("• Most expensive cities in a specific state")
+                st.info("• Rent-to-value ratios by location")
+                st.info("• Income limits for different areas")
+                st.info("• Comparing rent prices between states")
+                return
+
+            # Generate SQL query
             sql_query = query_tool.natural_language_to_sql(user_question)
-            
+
             if sql_query:
+                st.subheader("📝 Generated SQL Query")
                 st.code(sql_query, language="sql")
+
+                # Execute query with enhanced error handling
                 st.subheader("📊 Query Results")
                 results_df = query_tool.execute_sql_query(user_question, sql_query)
-                
+
                 if results_df is not None and len(results_df) > 0:
+                    # Show results count
+                    st.success(f"✅ **Found {len(results_df):,} results**")
+
+                    # Display results
                     st.dataframe(results_df, use_container_width=True, height=400)
+
+                    # Download button
                     csv = results_df.to_csv(index=False)
                     st.download_button(
                         label="📥 Download Results as CSV",
@@ -761,38 +1485,69 @@ def main_app_content():
                         mime="text/csv",
                         key="download_csv_button"
                     )
-                    
+
+                    # AI Summary
                     st.subheader("💡 AI Summary")
                     with st.spinner("Generating insights..."):
                         summary = query_tool.summarize_results(user_question, sql_query, results_df)
                         st.info(summary)
-                    
+
+                    # Visualizations
                     st.subheader("📈 Visualizations")
                     charts = create_visualizations(results_df, "general")
-                    
+
                     if charts:
                         for chart in charts:
                             st.plotly_chart(chart, use_container_width=True)
                     else:
-                        st.info("No suitable visualizations could be generated for this data.")
-                        
+                        st.info("💡 No suitable visualizations could be generated for this data type.")
+
                 elif results_df is not None and len(results_df) == 0:
-                    st.warning("No results found for your query.")
+                    # Empty results are handled in execute_sql_query method
+                    pass
                 else:
-                    st.error("Failed to execute the query. Please try rephrasing your question.")
+                    # Query execution failed completely
+                    st.error("❌ **Unable to process your question**")
+                    st.info("💡 **Try these suggestions:**")
+                    st.info("• Ask about cities, states, rent prices, or home values")
+                    st.info("• Use specific location names (e.g., 'California', 'Texas')")
+                    st.info("• Ask for comparisons or rankings")
+                    st.info("• Check the example questions in the sidebar")
             else:
-                st.error("Failed to generate SQL query. Please try rephrasing your question.")
+                # Failed to generate SQL query
+                st.error("❌ **Unable to understand your question**")
+                st.info("💡 **Please try:**")
+                st.info("• Using simpler language")
+                st.info("• Being more specific about what you want to know")
+                st.info("• Clicking one of the example questions in the sidebar")
+                st.info("• Asking about the available data types shown in the sidebar")
 
 # --- Main Application Flow ---
 def main():
     """Main Streamlit application entry point."""
     init_db()
 
+    # Clean up old session files periodically
+    cleanup_old_sessions()
+
+    # Initialize session state with more robust defaults
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
         st.session_state['username'] = None
         st.session_state['user_role'] = 'guest'
         st.session_state['user_id'] = None
+        st.session_state['session_initialized'] = True
+
+        # Try to restore session from persistent storage
+        if restore_session_if_available():
+            st.success("Welcome back! Your session has been restored.")
+            st.rerun()
+
+    # Add session state debugging (can be removed in production)
+    if st.session_state.get('logged_in'):
+        # Ensure session state is maintained
+        if not st.session_state.get('username'):
+            st.session_state['logged_in'] = False
     
     st.markdown("""
         <style>
@@ -810,6 +1565,9 @@ def main():
     else:
         st.sidebar.header(f"Welcome, {st.session_state['username']}!")
         st.sidebar.write(f"Role: **{st.session_state['user_role'].replace('_', ' ').title()}**")
+
+        # Add session info for debugging (can be hidden in production)
+        
 
         app_tabs = ["Analytics"]
         if has_role('admin'):
