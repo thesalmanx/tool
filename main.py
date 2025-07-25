@@ -1,4 +1,6 @@
-import requests
+import asyncio
+import aiohttp
+from collections import defaultdict
 import pandas as pd
 import json
 import os
@@ -14,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import threading
+import requests
 import traceback
 from dotenv import load_dotenv
 load_dotenv()
@@ -106,14 +109,14 @@ def update_status(status, message=None, error=None, progress=None):
     if error:
         data['error'] = error
     if progress is not None:
-        data['progress'] = progress # New: Add progress field
+        data['progress'] = progress # Add progress field
     if status == 'running' and 'start_time' not in data: # Only set start_time once per run
         data['start_time'] = datetime.now().isoformat()
-    if status in ['success', 'failed', 'stopped']: # New: Add 'stopped' to end states
+    if status in ['success', 'failed', 'stopped']: # Add 'stopped' to end states
         data['end_time'] = datetime.now().isoformat()
         if status == 'success':
             data['last_success_date'] = datetime.now().isoformat()
-        if status == 'stopped': # New: Set progress to 100 if stopped prematurely
+        if status == 'stopped': # Set progress to 100 if stopped prematurely
             data['progress'] = 100.0
 
     with open(STATUS_FILE, 'w') as f:
@@ -353,94 +356,7 @@ def get_fips_code(state_code, city_name, county_name):
         logger.debug(f"Error fetching FIPS for {state_code}, {city_name}: {e}")
         return None
 
-def get_fmr_data(entityid, year="2025"):
-    """Get Fair Market Rent data with rate limiting"""
-    try:
-        # Validate HUD_BASE_URL before using it
-        if not HUD_BASE_URL or HUD_BASE_URL == 'None':
-            logger.error("❌ HUD_BASE_URL is not properly configured")
-            return None
-
-        url = f"{HUD_BASE_URL}/fmr/data/{entityid}?year={year}"
-        response = rate_limited_request(url, HUD_HEADERS)
-        
-        if response is None:
-            return None
-            
-        data = response.json().get('data', {})
-        basicdata = data.get('basicdata', {})
-        if isinstance(basicdata, list):
-            basicdata = next((item for item in basicdata if item.get('zip_code') == 'MSA level'), basicdata[0])
-        return {
-            'Efficiency': float(basicdata.get('Efficiency', pd.NA)),
-            'One-Bedroom': float(basicdata.get('One-Bedroom', pd.NA)),
-            'Two-Bedroom': float(basicdata.get('Two-Bedroom', pd.NA)),
-            'Three-Bedroom': float(basicdata.get('Three-Bedroom', pd.NA)),
-            'Four-Bedroom': float(basicdata.get('Four-Bedroom', pd.NA))
-        }
-    except Exception as e:
-        logger.debug(f"Error fetching FMR for {entityid}: {e}")
-        return None
-
-def get_income_limits(entityid, year="2025"):
-    """Get income limits data with rate limiting"""
-    try:
-        # Validate HUD_BASE_URL before using it
-        if not HUD_BASE_URL or HUD_BASE_URL == 'None':
-            logger.error("❌ HUD_BASE_URL is not properly configured")
-            return None
-
-        url = f"{HUD_BASE_URL}/il/data/{entityid}?year={year}"
-        response = rate_limited_request(url, HUD_HEADERS)
-        
-        if response is None:
-            return None
-            
-        data = response.json().get('data', {})
-        very_low = data.get('very_low', {})
-        return float(very_low.get('il50_p4', pd.NA))
-    except Exception as e:
-        logger.debug(f"Error fetching Income Limits for {entityid}: {e}")
-        return None
-
-def process_hud_row(row_data):
-    """Process a single row - fetch FIPS, FMR, and Income Limits"""
-    index, row = row_data
-    state_code = row['State']
-    city_name = row['City']
-    county_name = row['County']
-    
-    result = {
-        'index': index,
-        'entityid': None,
-        'Income Limits': pd.NA,
-        'Efficiency': pd.NA,
-        'OneBedroom': pd.NA,
-        'TwoBedroom': pd.NA,
-        'ThreeBedroom': pd.NA,
-        'FourBedroom': pd.NA
-    }
-    
-    # Get FIPS code
-    fips_code = get_fips_code(state_code, city_name, county_name)
-    if fips_code:
-        result['entityid'] = fips_code
-        
-        # Get FMR data
-        fmr_data = get_fmr_data(fips_code)
-        if fmr_data:
-            result['Efficiency'] = fmr_data['Efficiency']
-            result['OneBedroom'] = fmr_data['One-Bedroom']
-            result['TwoBedroom'] = fmr_data['Two-Bedroom']
-            result['ThreeBedroom'] = fmr_data['Three-Bedroom']
-            result['FourBedroom'] = fmr_data['Four-Bedroom']
-        
-        # Get Income Limits
-        income_limit = get_income_limits(fips_code)
-        if income_limit:
-            result['Income Limits'] = income_limit
-    
-    return result
+# Removed get_fmr_data and get_income_limits as they will be replaced by state-level fetching
 
 # =============================================================================
 # NAR DATA EXTRACTOR (FIXED)
@@ -478,7 +394,7 @@ class NARDataExtractor:
             return None
 
         try:
-            url = "[https://api.census.gov/data/2023/acs/acs5?get=B25077_001E,NAME&for=county](https://api.census.gov/data/2023/acs/acs5?get=B25077_001E,NAME&for=county):*"
+            url = "https://api.census.gov/data/2023/acs/acs5?get=B25077_001E,NAME&for=county:*"
             response = self.session.get(url, timeout=30)
             response.raise_for_status()
 
@@ -688,17 +604,37 @@ class Partners8Pipeline:
         return success
     
     def step2_merge_zillow_data(self):
-        """Step 2: Merge Zillow ZHVI and ZORI data"""
-        logger.info("🔄 STEP 2: Merging Zillow Data")
-        update_status("running", message="Step 2: Merging Zillow Data", progress=25) # Update progress
+        """Step 2: Merge Zillow ZHVI and ZORI data using an outer merge."""
+        logger.info("🔄 STEP 2: Merging Zillow Data (Outer Merge)")
+        update_status("running", message="Step 2: Merging Zillow Data (Outer Merge)", progress=25)
 
-        # Check for stop signal before starting
         if check_for_stop_signal():
             return False
 
-        zhvi_df = self.zillow_downloader.zhvi_data
-        zori_df = self.zillow_downloader.zori_data
-        
+        zhvi_df = self.zillow_downloader.zhvi_data.copy()
+        zori_df = self.zillow_downloader.zori_data.copy()
+
+        # Get the latest month's column names
+        zhvi_latest_col = zhvi_df.columns[-1]
+        zori_latest_col = zori_df.columns[-1]
+
+        # Rename the value columns before merging to avoid conflicts and make selection clear
+        zhvi_df = zhvi_df.rename(columns={zhvi_latest_col: 'ZMediumValue_temp'})
+        zori_df = zori_df.rename(columns={zori_latest_col: 'ZMediumRent_temp'})
+
+        # Select relevant columns for merging
+        zhvi_cols = ['RegionID', 'SizeRank', 'RegionName', 'State', 'CountyName', 'ZMediumValue_temp']
+        zori_cols = ['RegionID', 'RegionName', 'State', 'CountyName', 'ZMediumRent_temp']
+
+        # Perform outer merge
+        merged_df = pd.merge(
+            zhvi_df[zhvi_cols],
+            zori_df[zori_cols],
+            on=['RegionID', 'RegionName', 'State', 'CountyName'],
+            how='outer', # Changed to outer merge
+            suffixes=('_zhvi', '_zori') # Suffixes for columns that might exist in both
+        )
+
         # Define columns for final dataset
         columns = [
             'Region', 'SizeRank', 'RegionName', 'State', 'County', 'City',
@@ -707,111 +643,209 @@ class Partners8Pipeline:
             'ThreeBedroom', 'FourBedroom', 'Zillow Ratio', 'NAR Ratio',
             'ZH Ratio', 'NH Ratio'
         ]
-        
-        # Merge on common columns
-        merged_df = pd.merge(
-            zhvi_df[['RegionID', 'SizeRank', 'RegionName', 'State', 'CountyName']],
-            zori_df[['RegionID', 'RegionName', 'State', 'CountyName', zori_df.columns[-1]]],
-            on=['RegionID', 'RegionName', 'State', 'CountyName'],
-            how='inner'
-        )
-        
-        # Create final dataframe
+
+        # Initialize final dataframe
         self.final_data = pd.DataFrame(columns=columns)
+
+        # Assign values from merged_df to final_data, handling potential NaNs from outer merge
         self.final_data['Region'] = merged_df['RegionID']
-        self.final_data['SizeRank'] = merged_df['SizeRank']
+        self.final_data['SizeRank'] = merged_df['SizeRank'] # Will have NaNs if only ZORI data exists for a RegionID
         self.final_data['RegionName'] = merged_df['RegionName']
         self.final_data['State'] = merged_df['State']
         self.final_data['County'] = merged_df['CountyName']
-        self.final_data['City'] = merged_df['RegionName']
-        
-        # Assign ZMediumRent and immediately convert to numeric, coercing errors (Point 3)
-        self.final_data['ZMediumRent'] = pd.to_numeric(merged_df[zori_df.columns[-1]], errors='coerce')
-        
-        self.final_data['ZMediumValue'] = zhvi_df[zhvi_df['RegionID'].isin(merged_df['RegionID'])][zhvi_df.columns[-1]].values
-        
-        # Initialize other columns
-        other_cols = ['NMediumValue', 'entityid', 'Income Limits', 'Efficiency', 'OneBedroom', 
-                     'TwoBedroom', 'ThreeBedroom', 'FourBedroom', 'Zillow Ratio', 
+        self.final_data['City'] = merged_df['RegionName'] # City is same as RegionName in this context
+
+        # Assign the Zillow rent and value, converting to numeric and coercing errors
+        self.final_data['ZMediumRent'] = pd.to_numeric(merged_df['ZMediumRent_temp'], errors='coerce')
+        self.final_data['ZMediumValue'] = pd.to_numeric(merged_df['ZMediumValue_temp'], errors='coerce')
+
+        # Initialize other columns with pd.NA
+        other_cols = ['NMediumValue', 'entityid', 'Income Limits', 'Efficiency', 'OneBedroom',
+                     'TwoBedroom', 'ThreeBedroom', 'FourBedroom', 'Zillow Ratio',
                      'NAR Ratio', 'ZH Ratio', 'NH Ratio']
         self.final_data[other_cols] = pd.NA
-        
-        logger.info(f"✅ Merged data: {len(self.final_data)} rows")
+
+        logger.info(f"✅ Merged data: {len(self.final_data)} rows (using outer merge)")
         return len(self.final_data)
     
-    def step3_fetch_hud_data(self, max_workers=10):
-        """Step 3: Fetch HUD FMR and Income Limits data"""
-        logger.info("🏢 STEP 3: Fetching HUD Data")
-        update_status("running", message="Step 3: Fetching HUD Data", progress=40) # Update progress
+    async def step3_fetch_hud_data(self):
+        """Optimized Step 3: Fetch HUD data using state-level API calls."""
+        logger.info("🏢 STEP 3: Fetching HUD Data (Optimized with State-Level APIs)")
+        update_status("running", message="Step 3: Fetching HUD Data (Optimized)", progress=40)
+
+        unique_states = self.final_data['State'].dropna().unique().tolist()
+        logger.info(f"📊 Processing {len(unique_states)} unique states for HUD data.")
+
+        fmr_state_data_cache = {}
+        il_state_data_cache = {}
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=60),
+            connector=aiohttp.TCPConnector(limit=50) # Limit concurrent connections
+        ) as session:
+            # Phase 1: Fetch FIPS codes for all states (already efficient)
+            fips_tasks = []
+            for state_code in unique_states:
+                url = f"{HUD_BASE_URL}/fmr/listCounties/{state_code}?updated=2025"
+                fips_tasks.append(self._fetch_json(session, url, HUD_HEADERS, state_code=state_code, type="fips"))
+
+            fips_results = await asyncio.gather(*fips_tasks, return_exceptions=True)
+
+            # Populate fips_mapping
+            current_fips_mapping = {}
+            for res in fips_results:
+                if isinstance(res, Exception):
+                    logger.warning(f"Error fetching FIPS data: {res}")
+                    continue
+                state_code = res['state_code']
+                counties_data = res['data']
+                for area in counties_data:
+                    county_name = area.get('county_name', '').strip().lower()
+                    fips_code = area.get('fips_code')
+                    if county_name and fips_code:
+                        current_fips_mapping[f"{state_code}_{county_name}"] = fips_code
+
+            # Phase 2: Fetch FMR and IL data for all states concurrently
+            fmr_il_tasks = []
+            for state_code in unique_states:
+                # FMR state data
+                fmr_url = f"{HUD_BASE_URL}/fmr/statedata/{state_code}?year=2025"
+                fmr_il_tasks.append(self._fetch_json(session, fmr_url, HUD_HEADERS, state_code=state_code, type="fmr_state"))
+
+                # IL state data
+                il_url = f"{HUD_BASE_URL}/il/statedata/{state_code}?year=2025"
+                fmr_il_tasks.append(self._fetch_json(session, il_url, HUD_HEADERS, state_code=state_code, type="il_state"))
+
+            fmr_il_results = await asyncio.gather(*fmr_il_tasks, return_exceptions=True)
+
+            # Populate FMR and IL state data caches
+            for res in fmr_il_results:
+                if isinstance(res, Exception):
+                    logger.warning(f"Error fetching FMR/IL state data: {res}")
+                    continue
+                state_code = res['state_code']
+                data_type = res['type']
+                
+                if data_type == "fmr_state":
+                    fmr_state_data_cache[state_code] = {
+                        'counties': {
+                            self.nar_extractor.normalize_county_name(c.get('county_name')): c
+                            for c in res['data'].get('counties', []) if c.get('county_name')
+                        },
+                        'metroareas': {
+                            m.get('code'): m
+                            for m in res['data'].get('metroareas', []) if m.get('code')
+                        }
+                    }
+                elif data_type == "il_state":
+                    il_state_data_cache[state_code] = {
+                        'counties': {
+                            self.nar_extractor.normalize_county_name(c.get('county_name')): c
+                            for c in res['data'].get('counties', []) if c.get('county_name')
+                        },
+                        'metroareas': {
+                            m.get('code'): m
+                            for m in res['data'].get('metroareas', []) if m.get('code')
+                        }
+                    }
+
+        # Phase 3: Update dataframe from caches
+        updated_count = 0
+        for idx, row in self.final_data.iterrows():
+            state_code = row['State']
+            county_name = row['County']
+            region_name = row['RegionName'] # City name for matching
+
+            if pd.isna(state_code) or pd.isna(county_name):
+                continue
+
+            normalized_county = self.nar_extractor.normalize_county_name(county_name)
+            
+            # Get FIPS code from the mapping
+            fips_code_from_mapping = current_fips_mapping.get(f"{state_code}_{normalized_county}")
+            if fips_code_from_mapping:
+                self.final_data.at[idx, 'entityid'] = fips_code_from_mapping
+            
+            # Try to get FMR data
+            if state_code in fmr_state_data_cache:
+                fmr_data_for_state = fmr_state_data_cache[state_code]
+                
+                # Prioritize county-level match
+                fmr_county_match = fmr_data_for_state['counties'].get(normalized_county)
+                if fmr_county_match:
+                    self.final_data.at[idx, 'Efficiency'] = pd.to_numeric(fmr_county_match.get('Efficiency', pd.NA), errors='coerce')
+                    self.final_data.at[idx, 'OneBedroom'] = pd.to_numeric(fmr_county_match.get('One-Bedroom', pd.NA), errors='coerce')
+                    self.final_data.at[idx, 'TwoBedroom'] = pd.to_numeric(fmr_county_match.get('Two-Bedroom', pd.NA), errors='coerce')
+                    self.final_data.at[idx, 'ThreeBedroom'] = pd.to_numeric(fmr_county_match.get('Three-Bedroom', pd.NA), errors='coerce')
+                    self.final_data.at[idx, 'FourBedroom'] = pd.to_numeric(fmr_county_match.get('Four-Bedroom', pd.NA), errors='coerce')
+                    updated_count += 1
+                else:
+                    # Fallback to metro area if county not found, using FIPS code if available for metro area
+                    # This part is more complex as it requires matching the metro area name/code
+                    # For simplicity and to ensure data is not missed, we'll primarily rely on county-level for now.
+                    # If specific metro area data is needed, a more robust matching logic would be required here.
+                    pass
+
+
+            # Try to get Income Limits data
+            if state_code in il_state_data_cache:
+                il_data_for_state = il_state_data_cache[state_code]
+                il_county_match = il_data_for_state['counties'].get(normalized_county)
+                if il_county_match:
+                    # The IL API response for statedata has a slightly different structure for 'very_low'
+                    # It's directly under the county/metro object, not nested under 'basicdata'
+                    self.final_data.at[idx, 'Income Limits'] = pd.to_numeric(il_county_match.get('il50_p4', pd.NA), errors='coerce')
+                    updated_count += 1
+                else:
+                    pass # Similar to FMR, metro area fallback could be added here
+
+        logger.info(f"✅ HUD data fetched and updated for {updated_count} rows.")
+        return updated_count
+
+    async def _fetch_json(self, session, url, headers, state_code=None, type=None):
+        """Helper to fetch JSON data with rate limiting and error handling."""
+        global last_request_time
         
-        # Prepare data for processing
-        row_data = [(index, row) for index, row in self.final_data.iterrows()]
-        
-        # Process in batches
-        batch_size = max_workers * 2
-        total_batches = (len(row_data) + batch_size - 1) // batch_size
-        
-        with tqdm(total=len(row_data), desc="Fetching HUD data") as pbar:
-            for batch_num in range(total_batches):
-                if check_for_stop_signal(): # New: Check for stop signal
-                    return 0
+        if not url or 'None' in url:
+            raise ValueError(f"Invalid URL provided: {url}")
 
-                start_idx = batch_num * batch_size
-                end_idx = min((batch_num + 1) * batch_size, len(row_data))
-                batch_data = row_data[start_idx:end_idx]
+        for attempt in range(3): # Max 3 retries
+            with request_lock:
+                current_time = time.time()
+                time_since_last = current_time - last_request_time
+                if time_since_last < MIN_REQUEST_INTERVAL:
+                    await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
+                last_request_time = time.time()
 
-                # Process batch with threading
-                with ThreadPoolExecutor(max_workers=min(max_workers, len(batch_data))) as executor:
-                    future_to_row = {executor.submit(process_hud_row, row): row for row in batch_data}
-                    results = []
+            try:
+                async with session.get(url, headers=headers, timeout=30) as response:
+                    if response.status == 200:
+                        json_data = await response.json()
+                        return {'state_code': state_code, 'type': type, 'data': json_data.get('data', json_data)}
+                    elif response.status == 429:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        logger.warning(f"Rate limited. Waiting {wait_time:.2f}s before retry {attempt + 1}/3 for {url}")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            except aiohttp.ClientError as e:
+                logger.warning(f"Request error (attempt {attempt + 1}/3) for {url}: {e}")
+                if attempt < 2: # Don't sleep on last attempt
+                    await asyncio.sleep(2 ** attempt)
+                continue
+            except Exception as e:
+                logger.error(f"Unexpected error fetching {url}: {e}")
+                break # Break on unexpected errors
 
-                    for future in as_completed(future_to_row):
-                        # Check for stop signal more frequently during processing
-                        if check_for_stop_signal():
-                            # Cancel remaining futures
-                            for f in future_to_row:
-                                f.cancel()
-                            return 0
+        raise Exception(f"Failed to fetch data from {url} after multiple retries.")
 
-                        try:
-                            result = future.result()
-                            results.append(result)
-                            pbar.update(1)
-                            # Update progress more frequently during this long step
-                            current_progress = 40 + (pbar.n / len(row_data)) * 30 # 40% to 70% for HUD
-                            update_status("running", message="Step 3: Fetching HUD Data", progress=current_progress)
-                        except Exception as exc:
-                            pbar.update(1)
 
-                    # Update dataframe with results
-                    for result in results:
-                        if result:
-                            with lock:
-                                self.final_data.at[result['index'], 'entityid'] = result['entityid']
-                                self.final_data.at[result['index'], 'Income Limits'] = result['Income Limits']
-                                self.final_data.at[result['index'], 'Efficiency'] = result['Efficiency']
-                                self.final_data.at[result['index'], 'OneBedroom'] = result['OneBedroom']
-                                self.final_data.at[result['index'], 'TwoBedroom'] = result['TwoBedroom']
-                                self.final_data.at[result['index'], 'ThreeBedroom'] = result['ThreeBedroom']
-                                self.final_data.at[result['index'], 'FourBedroom'] = result['FourBedroom']
-
-                # Check for stop signal before delay
-                if check_for_stop_signal():
-                    return 0
-
-                # Delay between batches
-                if batch_num < total_batches - 1:
-                    time.sleep(1)
-        
-        hud_success_count = self.final_data['entityid'].notna().sum()
-        logger.info(f"✅ HUD data fetched: {hud_success_count}/{len(self.final_data)} rows")
-        return hud_success_count
-    
     def step4_fetch_nar_data(self):
         """Step 4: Fetch NAR median home values"""
         logger.info("🏡 STEP 4: Fetching NAR Data")
         update_status("running", message="Step 4: Fetching NAR Data", progress=75) # Update progress
-        if check_for_stop_signal(): # New: Check for stop signal
+        if check_for_stop_signal(): # Check for stop signal
             return 0
         
         # Get census data
@@ -828,7 +862,7 @@ class Partners8Pipeline:
         """Step 5: Calculate all ratios"""
         logger.info("📊 STEP 5: Calculating Ratios")
         update_status("running", message="Step 5: Calculating Ratios", progress=85) # Update progress
-        if check_for_stop_signal(): # New: Check for stop signal
+        if check_for_stop_signal(): # Check for stop signal
             return False
         
         self.final_data = self.ratio_calculator.calculate_all_ratios(self.final_data)
@@ -838,14 +872,37 @@ class Partners8Pipeline:
         """Step 6: Save final dataset"""
         logger.info("💾 STEP 6: Saving Final Data")
         update_status("running", message="Step 6: Saving Final Data", progress=95) # Update progress
-        if check_for_stop_signal(): # New: Check for stop signal
+        if check_for_stop_signal(): # Check for stop signal
             return None
         
+        # --- Start of NULL handling modification ---
+        # Create a copy to avoid modifying the original DataFrame in place before DB storage
+        df_to_save = self.final_data.copy()
+
+        # Fill numeric NaN/NA values with 0
+        numeric_cols_to_fill = [
+            'ZMediumRent', 'ZMediumValue', 'NMediumValue', 'Income Limits',
+            'Efficiency', 'OneBedroom', 'TwoBedroom', 'ThreeBedroom', 'FourBedroom',
+            'Zillow Ratio', 'NAR Ratio', 'ZH Ratio', 'NH Ratio'
+        ]
+        for col in numeric_cols_to_fill:
+            if col in df_to_save.columns:
+                # Use .loc to avoid SettingWithCopyWarning
+                df_to_save.loc[:, col] = pd.to_numeric(df_to_save[col], errors='coerce').fillna(0)
+
+        # Fill object/string NaN/NA values with empty string
+        object_cols_to_fill = ['entityid', 'RegionName', 'State', 'County', 'City'] # Added more object columns for robustness
+        for col in object_cols_to_fill:
+            if col in df_to_save.columns:
+                # Ensure column is string type before filling with empty string
+                df_to_save.loc[:, col] = df_to_save[col].astype(str).replace('nan', '').fillna('')
+        # --- End of NULL handling modification ---
+
         # Save main output file
         # Clear the file first before appending
         if os.path.exists(FINAL_OUTPUT):
             os.remove(FINAL_OUTPUT)
-        self.final_data.to_csv(FINAL_OUTPUT, index=False)
+        df_to_save.to_csv(FINAL_OUTPUT, index=False) # Use the modified DataFrame
         
         logger.info(f"✅ Final data saved: {FINAL_OUTPUT}")
         return FINAL_OUTPUT
@@ -854,10 +911,13 @@ class Partners8Pipeline:
         """Step 7: Store the final data in SQLite DB"""
         logger.info("🗄️ STEP 7: Storing data in SQLite Database")
         update_status("running", message="Step 7: Storing data in SQLite Database", progress=98) # Update progress
-        if check_for_stop_signal(): # New: Check for stop signal
+        if check_for_stop_signal(): # Check for stop signal
             return False
         
         conn = sqlite3.connect('partners8_data.db')
+        # Ensure the DataFrame being stored in DB is the original one with pd.NA,
+        # or handle imputation consistently if desired for DB as well.
+        # For now, using the original self.final_data which retains pd.NA for DB.
         self.final_data.rename(columns={'Region': 'ZipCode'}, inplace=True)
         self.final_data.to_sql('partners8_data', conn, if_exists='replace', index=False)
         conn.commit()
@@ -865,7 +925,7 @@ class Partners8Pipeline:
         logger.info("✅ Data successfully stored in partners8_data.db")
         return True
     
-    def run_complete_pipeline(self):
+    async def run_complete_pipeline(self):
         """Run the complete Partners 8 data pipeline"""
         logger.info("🚀 Starting Partners 8 Complete Data Pipeline")
         
@@ -882,7 +942,7 @@ class Partners8Pipeline:
         if check_for_stop_signal(): return False
         
         # Step 3: Fetch HUD data
-        if not self.step3_fetch_hud_data(): return False
+        if not await self.step3_fetch_hud_data(): return False
         if check_for_stop_signal(): return False
         
         # Step 4: Fetch NAR data
@@ -942,7 +1002,7 @@ def cleanup_pid_file():
     except Exception:
         pass
 
-def main():
+async def main():
     """Main function to run the pipeline and handle status reporting."""
     update_status("running", message="Pipeline starting...", progress=0)
 
@@ -952,7 +1012,7 @@ def main():
 
         # Initialize and run pipeline
         pipeline = Partners8Pipeline()
-        pipeline_success = pipeline.run_complete_pipeline()
+        pipeline_success = await pipeline.run_complete_pipeline()
 
         if pipeline_success:
             update_status("success", message="Pipeline completed successfully!", progress=100)
@@ -986,5 +1046,5 @@ def get_scraping_status_simple():
         return {"status": "unknown", "last_success_date": None, "error": "Status file is corrupted or missing.", "progress": 0}
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
 
