@@ -172,77 +172,60 @@ def get_persistent_session_file():
     return f"session_{browser_id}.json"
 
 def save_persistent_session(username, user_role, user_id):
-    """Save session data to a persistent file."""
-    session_file = get_persistent_session_file()
-    session_data = {
-        "username": username,
-        "user_role": user_role,
-        "user_id": user_id,
-        "created_at": datetime.now().isoformat(),
-        "expires_at": (datetime.now() + timedelta(hours=24)).isoformat()
-    }
-
-    try:
-        with open(session_file, 'w') as f:
-            json.dump(session_data, f, indent=4)
-        return True
-    except Exception as e:
-        st.error(f"Failed to save session: {e}")
-        return False
+    """Save session data to Streamlit session state only (no file creation)."""
+    # Store session data in Streamlit session state instead of files
+    st.session_state['username'] = username
+    st.session_state['user_role'] = user_role
+    st.session_state['user_id'] = user_id
+    st.session_state['session_created_at'] = datetime.now().isoformat()
+    st.session_state['session_expires_at'] = (datetime.now() + timedelta(hours=24)).isoformat()
+    return True
 
 def load_persistent_session():
-    """Load session data from persistent file."""
-    session_file = get_persistent_session_file()
-
-    if not os.path.exists(session_file):
-        return None
-
-    try:
-        with open(session_file, 'r') as f:
-            session_data = json.load(f)
+    """Load session data from Streamlit session state (no file reading)."""
+    # Check if session data exists in Streamlit session state
+    if ('username' in st.session_state and
+        'user_role' in st.session_state and
+        'session_expires_at' in st.session_state):
 
         # Check if session is expired
-        if datetime.fromisoformat(session_data['expires_at']) <= datetime.now():
-            os.remove(session_file)
+        try:
+            if datetime.fromisoformat(st.session_state['session_expires_at']) <= datetime.now():
+                # Clear expired session data
+                for key in ['username', 'user_role', 'user_id', 'session_created_at', 'session_expires_at']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                return None
+
+            return {
+                'username': st.session_state['username'],
+                'user_role': st.session_state['user_role'],
+                'user_id': st.session_state.get('user_id'),
+                'created_at': st.session_state.get('session_created_at'),
+                'expires_at': st.session_state['session_expires_at']
+            }
+        except Exception:
             return None
 
-        return session_data
-    except Exception as e:
-        # Remove corrupted session file
-        try:
-            os.remove(session_file)
-        except:
-            pass
-        return None
+    return None
 
 def clear_persistent_session():
-    """Clear the persistent session file."""
-    session_file = get_persistent_session_file()
-    try:
-        if os.path.exists(session_file):
-            os.remove(session_file)
-    except Exception:
-        pass
+    """Clear the persistent session data from Streamlit session state."""
+    # Clear session data from Streamlit session state
+    for key in ['username', 'user_role', 'user_id', 'session_created_at', 'session_expires_at']:
+        if key in st.session_state:
+            del st.session_state[key]
 
 def cleanup_old_sessions():
-    """Clean up expired session files."""
+    """Clean up any existing session files (legacy cleanup)."""
     try:
-        current_time = datetime.now()
+        # Remove any existing session files from previous versions
         for filename in os.listdir('.'):
             if filename.startswith('session_') and filename.endswith('.json'):
                 try:
-                    with open(filename, 'r') as f:
-                        session_data = json.load(f)
-
-                    # Check if session is expired
-                    if datetime.fromisoformat(session_data['expires_at']) <= current_time:
-                        os.remove(filename)
+                    os.remove(filename)
                 except Exception:
-                    # Remove corrupted session files
-                    try:
-                        os.remove(filename)
-                    except:
-                        pass
+                    pass
     except Exception:
         pass
 
@@ -664,16 +647,30 @@ def manage_data_scraping():
     final_csv_path = "partners8_final_data.csv"
     if os.path.exists(final_csv_path):
         try:
-            # Read the CSV file
-            with open(final_csv_path, 'r', encoding='utf-8') as f:
-                csv_data = f.read()
+            # Read and clean the CSV file
+            df_csv = pd.read_csv(final_csv_path)
+
+            # Apply the same data cleaning as in query results
+            for col in df_csv.columns:
+                if df_csv[col].dtype == 'object':
+                    # Convert to string and clean various artifacts
+                    df_csv[col] = df_csv[col].astype(str)
+                    df_csv[col] = df_csv[col].str.replace("'showing up", "", regex=False)
+                    df_csv[col] = df_csv[col].str.replace("showing up", "", regex=False)
+                    df_csv[col] = df_csv[col].str.replace("'", "", regex=False)  # Remove stray quotes
+                    df_csv[col] = df_csv[col].str.replace('"', "", regex=False)  # Remove stray double quotes
+                    # Replace 'nan' string with actual NaN
+                    df_csv[col] = df_csv[col].replace('nan', pd.NA)
+                    df_csv[col] = df_csv[col].replace('None', pd.NA)
+                    df_csv[col] = df_csv[col].replace('', pd.NA)
+
+            # Convert cleaned dataframe back to CSV
+            csv_data = df_csv.to_csv(index=False)
 
             # Get file info
-            file_size = os.path.getsize(final_csv_path)
+            file_size = len(csv_data.encode('utf-8'))
             file_size_mb = file_size / (1024 * 1024)
-
-            # Count rows (subtract 1 for header)
-            row_count = len(csv_data.split('\n')) - 1
+            row_count = len(df_csv)
 
             st.info(f"**Dataset Info:** {row_count:,} records | {file_size_mb:.2f} MB")
 
@@ -684,7 +681,7 @@ def manage_data_scraping():
                 file_name=f"partners8_complete_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 key="download_complete_csv_button",
-                help="Download the complete scraped real estate dataset",
+                help="Download the complete scraped real estate dataset (cleaned)",
                 use_container_width=True
             )
 
@@ -941,8 +938,8 @@ class StreamlitSQLQuery:
             st.error(f"❌ Failed to load database schema: {e}")
             st.stop()
     
-    def call_gemini_api(self, prompt, model="gemini-2.0-flash-exp"): # New: Changed model to gemini-2.0-flash-exp
-        """Call Gemini API directly using REST"""
+    def call_gemini_api(self, prompt, model="gemini-2.0-flash-exp", use_search=False):
+        """Call Gemini API directly using REST with optional Google Search grounding"""
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         
         headers = {'Content-Type': 'application/json'}
@@ -954,6 +951,10 @@ class StreamlitSQLQuery:
                 "candidateCount": 1
             }
         }
+        
+        # Add Google Search tool if requested
+        if use_search:
+            data["tools"] = [{"googleSearch": {}}]
         
         try:
             response = requests.post(
@@ -971,17 +972,123 @@ class StreamlitSQLQuery:
                     raise Exception("No response generated")
             else:
                 raise Exception(f"API call failed with status {response.status_code}: {response.text}")
-                
+            
         except Exception as e:
             raise Exception(f"Error calling Gemini API: {e}")
+
+    def handle_external_data_query(self, user_question):
+        """Handle queries that require external data using Google Search"""
+        search_prompt = f"""
+You are a real estate data analyst. The user asked: "{user_question}"
+
+This question requires external information not in our database. Use Google Search to find:
+1. Current information about landlord-friendly states, rent control laws, or other external real estate factors
+2. Any other relevant external data needed to answer the question
+3. Lists of states, cities, or regions that match the criteria mentioned in the question
+
+After getting the external information, provide:
+1. The external data you found (e.g., specific list of landlord-friendly states with their abbreviations)
+2. A suggested SQL query to filter our database using this information
+3. An explanation of how to combine the external data with our database
+
+Our database contains: rent prices, home values, income limits, city/state info, rent-to-value ratios.
+
+IMPORTANT: When providing state lists, use 2-letter state abbreviations (CA, TX, NY, FL, etc.) that can be used directly in SQL IN clauses.
+"""
+
+        try:
+            external_info = self.call_gemini_api(search_prompt, use_search=True)
+            return external_info
+        except Exception as e:
+            return f"Unable to fetch external data: {e}"
+
+    def search_for_missing_data(self, user_question, empty_results_explanation):
+        """Search for external data when database query returns no results"""
+        search_prompt = f"""
+The user asked: "{user_question}"
+
+Our real estate database query returned no results. This likely means the user is asking about information not in our database.
+
+Use Google Search to find current, relevant information about:
+1. The specific criteria, locations, or factors mentioned in the question
+2. Lists of states, cities, or regions that match the user's criteria (with 2-letter state abbreviations)
+3. Current real estate market conditions, laws, or policies related to the question
+4. Any other relevant external information that could help answer the user's question
+
+After finding the external information, provide:
+
+**EXTERNAL INFORMATION FOUND:**
+[Present the key information you found from your search]
+
+**HOW TO USE THIS WITH OUR DATABASE:**
+[Suggest specific SQL queries or search terms the user could try with our database, using the external information you found]
+
+**EXAMPLE QUERIES FOR OUR DATABASE:**
+[Provide 2-3 specific example questions the user could ask using our available data: rent prices, home values, income limits, rent-to-value ratios, city/state comparisons]
+
+Our database contains real estate data for US cities including: State, City, RegionName (city names), Region (Zillow region IDs), rent prices (ZMediumRent), home values (ZMediumValue, NMediumValue), income limits, and calculated ratios.
+"""
+
+        try:
+            external_info = self.call_gemini_api(search_prompt, use_search=True)
+            return external_info
+        except Exception as e:
+            return f"Unable to search for additional information: {e}"
+
+    def enhanced_natural_language_to_sql(self, user_question):
+        """Enhanced SQL generation that handles external data queries"""
+        # Check if query needs external data - expanded keyword list
+        external_keywords = [
+            'landlord friendly', 'landlord-friendly', 'rent control', 'tenant friendly', 'tenant-friendly',
+            'business friendly', 'business-friendly', 'tax friendly', 'tax-friendly',
+            'investment friendly', 'investment-friendly', 'pro-business', 'pro-landlord',
+            'real estate friendly', 'property friendly', 'investor friendly', 'investor-friendly',
+            'low regulation', 'high regulation', 'regulatory friendly', 'eviction friendly',
+            'rental friendly', 'property rights', 'zoning laws', 'development friendly'
+        ]
+
+        needs_external_data = any(keyword in user_question.lower() for keyword in external_keywords)
+        
+        if needs_external_data:
+            st.info("🔍 **Detecting external data requirement...** Searching for additional information.")
+            
+            # Get external data first
+            external_info = self.handle_external_data_query(user_question)
+            st.expander("🌐 External Data Found", expanded=False).write(external_info)
+            
+            # Now generate SQL with external context
+            enhanced_prompt = f"""
+{self.create_schema_prompt()}
+
+EXTERNAL CONTEXT: {external_info}
+
+USER QUESTION: "{user_question}"
+
+Based on the external information above and our database schema, generate a SQL query that:
+1. Uses the external data to filter our database appropriately
+2. Answers the user's question with available database columns
+3. If external data mentions specific states, use those in WHERE State IN (...) clause
+
+Generate the complete, executable SQL query:
+"""
+            
+            try:
+                response_text = self.call_gemini_api(enhanced_prompt)
+                return self.clean_sql_query(response_text)
+            except Exception as e:
+                st.error(f"❌ Error generating enhanced SQL query: {e}")
+                return None
+        else:
+            # Use regular SQL generation
+            return self.natural_language_to_sql(user_question)
     
     def create_schema_prompt(self):
         """Create a detailed schema prompt for Gemini"""
         column_descriptions = {
             'id': 'Primary key, auto-increment',
-            'Region': 'Zillow Region ID',
+            'Region': 'Zillow Region ID (numeric identifier for the region)',
             'SizeRank': 'City size ranking by population',
-            'RegionName': 'City name',
+            'RegionName': 'City name (the actual name of the city/region)',
             'State': 'US State abbreviation (e.g., CA, TX, NY)',
             'County': 'County name',
             'City': 'City name (same as RegionName)',
@@ -1194,40 +1301,46 @@ Provide a concise, helpful explanation (1-2 sentences) that suggests what the us
             return "The search criteria might be too specific. Try broadening your search or checking for typos in city/state names."
 
     def validate_and_suggest(self, user_question):
-        """Validate user question and provide suggestions if it seems problematic"""
+        """Validate user question and determine if external search is needed"""
         schema_prompt = self.create_schema_prompt()
 
         # Check for common issues that might lead to no results
         question_lower = user_question.lower()
 
-        # List of data types we don't have
-        unavailable_data = [
+        # List of data types that definitely require external search
+        external_search_indicators = [
             'population', 'demographics', 'crime', 'schools', 'weather', 'employment',
             'transportation', 'hospitals', 'restaurants', 'shopping', 'parks',
-            'property tax', 'mortgage rates', 'construction', 'permits'
+            'property tax', 'mortgage rates', 'construction', 'permits',
+            'landlord friendly', 'landlord-friendly', 'tenant friendly', 'tenant-friendly',
+            'business friendly', 'business-friendly', 'investment friendly', 'investment-friendly',
+            'pro-business', 'pro-landlord', 'rent control', 'eviction laws'
         ]
 
-        # Check if user is asking for unavailable data
-        for unavailable in unavailable_data:
-            if unavailable in question_lower:
-                return {
-                    'valid': False,
-                    'suggestion': f"I don't have {unavailable} data. However, I can help you with rent prices, home values, income limits, and rent-to-value ratios. Try asking about these instead!"
-                }
+        # Check if user is asking for data that requires external search
+        needs_external_search = any(indicator in question_lower for indicator in external_search_indicators)
 
-        # Use AI to validate the question
+        if needs_external_search:
+            return {
+                'valid': True,
+                'needs_external_search': True,
+                'suggestion': None
+            }
+
+        # Use AI to validate the question for database-only queries
         prompt = f"""
 {schema_prompt}
 
 USER QUESTION: "{user_question}"
 
-Analyze if this question can be answered using the available database schema above.
+Analyze if this question can be answered using ONLY the available database schema above.
 
 Return ONLY one of these responses:
-1. "VALID" - if the question can be answered with available data
-2. "INVALID: [brief explanation]" - if the question asks for data not in the schema
+1. "VALID" - if the question can be answered with available database data
+2. "EXTERNAL_SEARCH" - if the question requires external information not in the database
+3. "INVALID: [brief explanation]" - if the question is unclear or problematic
 
-Focus on whether the requested information exists in the database columns.
+Focus on whether the requested information exists in the database columns or requires external data.
 """
 
         try:
@@ -1235,18 +1348,21 @@ Focus on whether the requested information exists in the database columns.
             response_text = response_text.strip()
 
             if response_text.startswith("VALID"):
-                return {'valid': True, 'suggestion': None}
+                return {'valid': True, 'needs_external_search': False, 'suggestion': None}
+            elif response_text.startswith("EXTERNAL_SEARCH"):
+                return {'valid': True, 'needs_external_search': True, 'suggestion': None}
             elif response_text.startswith("INVALID"):
                 suggestion = response_text.replace("INVALID:", "").strip()
                 return {
                     'valid': False,
-                    'suggestion': f"{suggestion} Try asking about rent prices, home values, income limits, or city/state comparisons instead."
+                    'needs_external_search': False,
+                    'suggestion': f"{suggestion}"
                 }
             else:
-                return {'valid': True, 'suggestion': None}
+                return {'valid': True, 'needs_external_search': False, 'suggestion': None}
 
         except Exception:
-            return {'valid': True, 'suggestion': None}
+            return {'valid': True, 'needs_external_search': False, 'suggestion': None}
 
     def execute_sql_query(self, user_question, sql_query):
         """Execute the SQL query and return results with enhanced error handling"""
@@ -1254,11 +1370,53 @@ Focus on whether the requested information exists in the database columns.
             with sqlite3.connect(DATABASE_FILE) as conn:
                 df = pd.read_sql_query(sql_query, conn)
 
-                # Check if results are empty and provide helpful feedback
+                # Fix column names for display
+                column_renames = {
+                    'RegionName': 'City Name',  # RegionName actually contains city names, not zip codes
+                    'Region': 'Region ID',  # Region contains Zillow Region ID
+                    'ZMediumRent': 'ZMedium(Median)Rent',
+                    'ZMediumValue': 'ZMedium(Median)Value',
+                    'NMediumValue': 'NMedium(Median)Value'
+                }
+
+                df = df.rename(columns=column_renames)
+
+                # Enhanced data cleaning - remove "'showing up" artifacts and other data quality issues
+                for col in df.columns:
+                    if df[col].dtype == 'object':
+                        # Convert to string and clean various artifacts
+                        df[col] = df[col].astype(str)
+                        df[col] = df[col].str.replace("'showing up", "", regex=False)
+                        df[col] = df[col].str.replace("showing up", "", regex=False)
+                        df[col] = df[col].str.replace("'", "", regex=False)  # Remove stray quotes
+                        df[col] = df[col].str.replace('"', "", regex=False)  # Remove stray double quotes
+                        # Replace 'nan' string with actual NaN
+                        df[col] = df[col].replace('nan', pd.NA)
+                        df[col] = df[col].replace('None', pd.NA)
+                        df[col] = df[col].replace('', pd.NA)
+                
+                # Set default column order as requested by Brian
+                if len(df.columns) > 4 and 'State' in df.columns:
+                    # Default columns: State, City Name, Region ID, FourBedroom, ZMedium(Median)Value
+                    preferred_columns = ['State', 'City Name', 'Region ID', 'FourBedroom', 'ZMedium(Median)Value']
+                    available_preferred = [col for col in preferred_columns if col in df.columns]
+                    other_columns = [col for col in df.columns if col not in available_preferred]
+                    df = df[available_preferred + other_columns]
+
+                # Check if results are empty and provide enhanced feedback with external search
                 if len(df) == 0:
                     explanation = self.explain_empty_results(user_question, sql_query)
-                    st.warning("🔍 No results found for your query.")
-                    st.info(f"💡 **Possible reasons:** {explanation}")
+                    st.warning("🔍 No results found in the database for your query.")
+
+                    # Always search for external data when no results found
+                    st.info("🌐 **Searching the internet for relevant information...**")
+                    with st.spinner("Searching external sources..."):
+                        external_search_result = self.search_for_missing_data(user_question, explanation)
+
+                    with st.expander("🔍 Information Found on the Internet", expanded=True):
+                        st.write(external_search_result)
+
+                    st.info("💡 **Next Steps:** Use the external information above to refine your query with specific states, cities, or criteria that exist in our database.")
 
                 return df
 
@@ -1386,14 +1544,16 @@ def main_app_content():
         examples = [
             "What are the top 10 most expensive cities by home value?",
             "Show me California cities with rent above $2500",
-            "Which states have the lowest HUD income limits?",
+            "Give me all the states that are landlord-friendly and show me the highest ZH Ratio",
             "Find cities where Zillow median rent is above $3000",
             "Compare median home values between Texas and Florida",
-            "Show me cities with the best rent-to-value ratios",
+            "Show me cities with the best rent-to-value ratios in business-friendly states",
             "What are the most affordable cities in New York state?",
             "Find cities where 4-bedroom HUD rent is under $1500",
             "Show me the highest rent cities in each state",
-            "Which cities have the biggest difference between Zillow and NAR home values?"
+            "Which cities have the biggest difference between Zillow and NAR home values?",
+            "Find investment-friendly states with high rental yields",
+            "Show me tenant-friendly states with affordable housing options"
         ]
         
         # Initialize user_question in session_state if not present
@@ -1445,21 +1605,28 @@ def main_app_content():
     
     if analyze_button and user_question:
         with st.spinner("🤔 Processing your question..."):
-            # First, validate the question
+            # First, validate the question and check if external search is needed
             validation = query_tool.validate_and_suggest(user_question)
 
             if not validation['valid']:
                 st.warning("🔍 **Question Analysis**")
                 st.info(f"💡 {validation['suggestion']}")
-                st.info("**Try asking about:**")
-                st.info("• Most expensive cities in a specific state")
-                st.info("• Rent-to-value ratios by location")
-                st.info("• Income limits for different areas")
-                st.info("• Comparing rent prices between states")
                 return
 
-            # Generate SQL query
-            sql_query = query_tool.natural_language_to_sql(user_question)
+            # If external search is needed, do it proactively
+            if validation.get('needs_external_search', False):
+                st.info("🌐 **This question requires external information. Searching the internet...**")
+                with st.spinner("Searching external sources..."):
+                    external_info = query_tool.handle_external_data_query(user_question)
+
+                with st.expander("🔍 External Information Found", expanded=True):
+                    st.write(external_info)
+
+                # Now try to generate SQL with external context
+                sql_query = query_tool.enhanced_natural_language_to_sql(user_question)
+            else:
+                # Use regular SQL generation for database-only queries
+                sql_query = query_tool.natural_language_to_sql(user_question)
 
             if sql_query:
                 st.subheader("📝 Generated SQL Query")
@@ -1503,7 +1670,7 @@ def main_app_content():
                         st.info("💡 No suitable visualizations could be generated for this data type.")
 
                 elif results_df is not None and len(results_df) == 0:
-                    # Empty results are handled in execute_sql_query method
+                    # Empty results are handled in execute_sql_query method with external search
                     pass
                 else:
                     # Query execution failed completely
