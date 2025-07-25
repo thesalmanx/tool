@@ -489,7 +489,7 @@ def manage_users():
 def get_scraping_status():
     """Reads the scraping status from the JSON file."""
     if not os.path.exists(STATUS_FILE):
-        return {"status": "idle", "last_success_date": None, "progress": 0} # New: Default progress to 0
+        return {"status": "idle", "last_success_date": None, "progress": 0}
     try:
         with open(STATUS_FILE, 'r') as f:
             status_data = json.load(f)
@@ -512,8 +512,11 @@ def get_scraping_status():
                                 status_data['error'] = 'Process terminated unexpectedly'
                                 with open(STATUS_FILE, 'w') as f:
                                     json.dump(status_data, f, indent=4)
-                        except (psutil.NoSuchProcess, ImportError):
-                            # Process doesn't exist, update status
+                        except ImportError:
+                            # psutil not available, skip process checking
+                            pass
+                        except Exception:
+                            # Process doesn't exist or other error, update status
                             status_data['status'] = 'failed'
                             status_data['error'] = 'Process not found'
                             with open(STATUS_FILE, 'w') as f:
