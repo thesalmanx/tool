@@ -4,6 +4,7 @@ numpy
 plotly
 fuzzywuzzy
 python-dotenv
+aiohttp
 requests
 tqdm
 openpyxl
