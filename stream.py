@@ -503,24 +503,28 @@ def get_scraping_status():
                         stored_pid = pid_data.get("pid")
 
                     if stored_pid:
+                        # Try to check if process is running (only if psutil is available)
+                        process_check_failed = False
                         try:
+                            prin("--------------------------------------------------------------------------")
                             import psutil
                             proc = psutil.Process(stored_pid)
                             if not proc.is_running():
-                                # Process is not running, update status
-                                status_data['status'] = 'failed'
-                                status_data['error'] = 'Process terminated unexpectedly'
-                                with open(STATUS_FILE, 'w') as f:
-                                    json.dump(status_data, f, indent=4)
+                                process_check_failed = True
                         except ImportError:
                             # psutil not available, skip process checking
                             pass
-                        except Exception:
-                            # Process doesn't exist or other error, update status
+                        except:
+                            # Process doesn't exist or other psutil error
+                            process_check_failed = True
+                        
+                        if process_check_failed:
+                            # Process is not running, update status
                             status_data['status'] = 'failed'
-                            status_data['error'] = 'Process not found'
+                            status_data['error'] = 'Process terminated unexpectedly'
                             with open(STATUS_FILE, 'w') as f:
                                 json.dump(status_data, f, indent=4)
+
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass
 
