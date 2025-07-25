@@ -478,7 +478,7 @@ class NARDataExtractor:
             return None
 
         try:
-            url = "https://api.census.gov/data/2023/acs/acs5?get=B25077_001E,NAME&for=county:*"
+            url = "[https://api.census.gov/data/2023/acs/acs5?get=B25077_001E,NAME&for=county](https://api.census.gov/data/2023/acs/acs5?get=B25077_001E,NAME&for=county):*"
             response = self.session.get(url, timeout=30)
             response.raise_for_status()
 
@@ -724,7 +724,10 @@ class Partners8Pipeline:
         self.final_data['State'] = merged_df['State']
         self.final_data['County'] = merged_df['CountyName']
         self.final_data['City'] = merged_df['RegionName']
-        self.final_data['ZMediumRent'] = merged_df[zori_df.columns[-1]]
+        
+        # Assign ZMediumRent and immediately convert to numeric, coercing errors (Point 3)
+        self.final_data['ZMediumRent'] = pd.to_numeric(merged_df[zori_df.columns[-1]], errors='coerce')
+        
         self.final_data['ZMediumValue'] = zhvi_df[zhvi_df['RegionID'].isin(merged_df['RegionID'])][zhvi_df.columns[-1]].values
         
         # Initialize other columns
@@ -855,6 +858,7 @@ class Partners8Pipeline:
             return False
         
         conn = sqlite3.connect('partners8_data.db')
+        self.final_data.rename(columns={'Region': 'ZipCode'}, inplace=True)
         self.final_data.to_sql('partners8_data', conn, if_exists='replace', index=False)
         conn.commit()
         conn.close()
