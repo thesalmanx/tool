@@ -124,15 +124,12 @@ export default function LoginForm() {
           // Continue anyway, the redirect might still work
         }
 
+        setSuccess("Login successful! You are now logged in.")
         
-
-        setSuccess("Login successful! Redirecting...")
+        // Clear the form
+        setLoginData({ username: "", password: "" })
         
-        // Add a small delay to show success message
-        setTimeout(() => {
-          // Use window.location.href for more reliable redirect
-          window.location.href = "/dashboard"
-        }, 1000)
+        // NO REDIRECT - just show success message
 
       } else {
         const errorText = await response.text()
