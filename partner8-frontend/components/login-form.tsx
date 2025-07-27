@@ -69,6 +69,7 @@ export default function LoginForm() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
