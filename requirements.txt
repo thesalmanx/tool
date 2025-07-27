@@ -1,0 +1,40 @@
+# Core FastAPI and web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database and ORM
+sqlalchemy
+
+# Authentication and security
+passlib[bcrypt]
+python-jose[cryptography]
+PyJWT
+
+# Data validation
+pydantic
+email-validator
+
+# HTTP client and web scraping
+requests
+urllib3
+
+# Data processing and analysis
+pandas
+numpy
+
+# Google AI/Gemini integration
+google-genai
+
+# Environment variables
+python-dotenv
+
+# Data matching and fuzzy string matching
+fuzzywuzzy
+python-Levenshtein
+
+# Progress bars and UI
+tqdm
+
+# Optional: For production deployment
+gunicorn
