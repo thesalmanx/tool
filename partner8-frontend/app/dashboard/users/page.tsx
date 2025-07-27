@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { CheckCircle, Plus, UserPlus, Crown, Edit } from "lucide-react"
+import { apiClient } from "../../../utils/api"
 
 interface User {
   id: number
@@ -95,25 +96,26 @@ export default function UsersPage() {
   const fetchUsers = async (page: number = currentPage) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch(`http://localhost:8000/users?page=${page}&limit=${itemsPerPage}`, {
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      const data = await apiClient.get(`/users?page=${page}&limit=${itemsPerPage}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
-
-      if (response.ok) {
-        const data = await response.json()
-        setUsers(data.users)
-        setTotalPages(Math.ceil(data.total / itemsPerPage))
-        setCurrentPage(data.page)
-      } else if (response.status === 401) {
+      setUsers(data.users)
+      setTotalPages(Math.ceil(data.total / itemsPerPage))
+      setCurrentPage(data.page)
+    } catch (err: any) {
+      console.error("Failed to fetch users:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
-      } else {
-        setError("Failed to fetch users")
       }
-    } catch (err) {
-      setError("Network error")
+      setError(err.message || "Failed to fetch users")
     } finally {
       setIsLoading(false)
     }
@@ -122,78 +124,79 @@ export default function UsersPage() {
   const approveUser = async (userId: number) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch(`http://localhost:8000/approve_user/${userId}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      await apiClient.put(`/approve_user/${userId}`, null, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        setSuccess("User approved successfully")
-        fetchUsers()
-        setTimeout(() => setSuccess(""), 3000)
-      } else if (response.status === 401) {
+      setSuccess("User approved successfully")
+      fetchUsers()
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      console.error("Failed to approve user:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        setError("Failed to approve user")
+        setError(err.message || "Failed to approve user")
       }
-    } catch (err) {
-      setError("Network error")
     }
   }
 
   const promoteToAdmin = async (userId: number) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch(`http://localhost:8000/promote_to_admin/${userId}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      await apiClient.put(`/promote_to_admin/${userId}`, null, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        setSuccess("User promoted to admin successfully")
-        fetchUsers()
-        setTimeout(() => setSuccess(""), 3000)
-      } else if (response.status === 401) {
+      setSuccess("User promoted to admin successfully")
+      fetchUsers()
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      console.error("Failed to promote user:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        setError("Failed to promote user")
+        setError(err.message || "Failed to promote user")
       }
-    } catch (err) {
-      setError("Network error")
     }
   }
 
   const updateUser = async (userId: number, updates: { role?: string; is_approved?: boolean }) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch(`http://localhost:8000/users/${userId}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updates),
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      await apiClient.put(`/users/${userId}`, updates, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        setSuccess("User updated successfully")
-        fetchUsers()
-        setEditingUser(null)
-        setTimeout(() => setSuccess(""), 3000)
-      } else if (response.status === 401) {
+      setSuccess("User updated successfully")
+      fetchUsers()
+      setEditingUser(null)
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      console.error("Failed to update user:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        setError("Failed to update user")
+        setError(err.message || "Failed to update user")
       }
-    } catch (err) {
-      setError("Network error")
     }
   }
 
@@ -201,36 +204,34 @@ export default function UsersPage() {
     e.preventDefault()
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/users", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(newUser),
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      await apiClient.post("/users", newUser, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        setSuccess("User created successfully")
-        setIsCreateDialogOpen(false)
-        setNewUser({
-          username: "",
-          email: "",
-          password: "",
-          role: "user",
-          is_approved: true,
-        })
-        fetchUsers()
-        setTimeout(() => setSuccess(""), 3000)
-      } else if (response.status === 401) {
+      setSuccess("User created successfully")
+      setIsCreateDialogOpen(false)
+      setNewUser({
+        username: "",
+        email: "",
+        password: "",
+        role: "user",
+        is_approved: true,
+      })
+      fetchUsers()
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      console.error("Failed to create user:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        const errorData = await response.json()
-        setError(errorData.detail || "Failed to create user")
+        setError(err.message || "Failed to create user")
       }
-    } catch (err) {
-      setError("Network error")
     }
   }
 

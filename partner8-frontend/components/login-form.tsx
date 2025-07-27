@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { apiClient } from "../utils/api"
 
 // Cookie utility functions
 const setCookie = (name: string, value: string, days: number = 7) => {
@@ -47,7 +48,7 @@ export default function LoginForm() {
       formData.append("username", loginData.username)
       formData.append("password", loginData.password)
 
-      const response = await fetch("http://localhost:8000/token", {
+      const response = await fetch(`${apiClient.baseURL}/token`, {
         method: "POST",
         body: formData,
       })
@@ -97,7 +98,7 @@ export default function LoginForm() {
     setSuccess("")
 
     try {
-      const response = await fetch("http://localhost:8000/signup", {
+      const response = await fetch(`${apiClient.baseURL}/signup`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -161,15 +162,7 @@ export default function LoginForm() {
           <Button type="submit" className="w-full" disabled={isLoading}>
             {isLoading ? "Signing in..." : "Sign In"}
           </Button>
-          <div className="text-sm text-gray-600 text-center bg-gray-50 p-3 rounded-md">
-            <p className="font-medium text-gray-700 mb-1">Default admin credentials:</p>
-            <p>
-              <strong>Username:</strong> admin
-            </p>
-            <p>
-              <strong>Password:</strong> admin123
-            </p>
-          </div>
+          
         </form>
       </TabsContent>
 

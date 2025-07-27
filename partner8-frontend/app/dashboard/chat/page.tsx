@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Send, Bot, User, Database, Search, ExternalLink, BarChart3, Download, FileText, Table, FileSpreadsheet } from "lucide-react"
+import { apiClient } from "../../../utils/api"
 
 interface Message {
   id: string
@@ -107,21 +108,23 @@ export default function ChatPage() {
   const loadDatabaseInfo = async () => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/database/info", {
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      const data = await apiClient.get("/database/info", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
-
-      if (response.ok) {
-        const data = await response.json()
-        setDatabaseInfo(data)
-      } else if (response.status === 401) {
+      setDatabaseInfo(data)
+    } catch (err: any) {
+      console.error("Failed to load database info:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       }
-    } catch (err) {
-      console.error("Failed to load database info:", err)
     }
   }
 
@@ -144,61 +147,57 @@ export default function ChatPage() {
 
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/chat", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: messageToSend,
-          session_id: currentSessionId,
-        }),
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      const data: ChatResponse = await apiClient.post("/chat", {
+        message: messageToSend,
+        session_id: currentSessionId,
+      }, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        const data: ChatResponse = await response.json()
+      if (!currentSessionId) {
+        setCurrentSessionId(data.session_id)
+      }
 
-        if (!currentSessionId) {
-          setCurrentSessionId(data.session_id)
+      // Extract summary from response for data queries
+      let summary = ""
+      let cleanResponse = data.response
+      
+      if (data.query_type === "data_query" && data.response.includes("**Data Analysis Results:**")) {
+        const parts = data.response.split("**Data Analysis Results:**")
+        if (parts.length > 1) {
+          const summaryPart = parts[1].split("**Found")[0].trim()
+          summary = summaryPart.replace(/\n\n/g, " ").trim()
+          cleanResponse = summary
         }
+      }
 
-        // Extract summary from response for data queries
-        let summary = ""
-        let cleanResponse = data.response
-        
-        if (data.query_type === "data_query" && data.response.includes("**Data Analysis Results:**")) {
-          const parts = data.response.split("**Data Analysis Results:**")
-          if (parts.length > 1) {
-            const summaryPart = parts[1].split("**Found")[0].trim()
-            summary = summaryPart.replace(/\n\n/g, " ").trim()
-            cleanResponse = summary
-          }
-        }
-
-        const botMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: cleanResponse,
-          sender: "bot",
-          timestamp: new Date(),
-          isGrounded: data.is_grounded,
-          sources: data.sources,
-          sessionId: data.session_id,
-          queryType: data.query_type,
-          sqlQuery: data.sql_query,
-          queryResults: data.query_results,
-          summary: summary || cleanResponse,
-        }
-        setMessages((prev) => [...prev, botMessage])
-      } else if (response.status === 401) {
+      const botMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: cleanResponse,
+        sender: "bot",
+        timestamp: new Date(),
+        isGrounded: data.is_grounded,
+        sources: data.sources,
+        sessionId: data.session_id,
+        queryType: data.query_type,
+        sqlQuery: data.sql_query,
+        queryResults: data.query_results,
+        summary: summary || cleanResponse,
+      }
+      setMessages((prev) => [...prev, botMessage])
+    } catch (err: any) {
+      console.error("Failed to send message:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        const errorData = await response.json()
-        setError(errorData.detail || "Failed to send message")
+        setError(err.message || "Failed to send message")
       }
-    } catch (err) {
-      setError("Network error. Please try again.")
     } finally {
       setIsLoading(false)
     }

@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Progress } from "@/components/ui/progress"
 import { Play, Square, RefreshCw, Activity, Clock, CheckCircle, XCircle, AlertTriangle, Pause, SkipForward } from "lucide-react"
+import { apiClient } from "../../../utils/api"
 
 interface ScrapingStatus {
   status: string
@@ -90,43 +91,49 @@ export default function ScrapingPage() {
   const fetchStatus = async () => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/scraping_status", {
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      const data = await apiClient.get("/scraping_status", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
-      if (response.ok) {
-        const data = await response.json()
-        setStatus(data)
-        setIsPaused(data.status === "paused")
-      } else if (response.status === 401) {
+      setStatus(data)
+      setIsPaused(data.status === "paused")
+    } catch (err: any) {
+      console.error("Failed to fetch status:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       }
-    } catch (err) {
-      console.error("Failed to fetch status:", err)
     }
   }
 
   const fetchLogs = async (page: number = currentPage) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch(`http://localhost:8000/scraping_logs?page=${page}&limit=${itemsPerPage}`, {
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      const data = await apiClient.get(`/scraping_logs?page=${page}&limit=${itemsPerPage}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
-      if (response.ok) {
-        const data = await response.json()
-        setLogs(data.logs)
-        setTotalPages(Math.ceil(data.total / itemsPerPage))
-        setCurrentPage(data.page)
-      } else if (response.status === 401) {
+      setLogs(data.logs)
+      setTotalPages(Math.ceil(data.total / itemsPerPage))
+      setCurrentPage(data.page)
+    } catch (err: any) {
+      console.error("Failed to fetch logs:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       }
-    } catch (err) {
-      console.error("Failed to fetch logs:", err)
     }
   }
 
@@ -137,27 +144,27 @@ export default function ScrapingPage() {
 
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/start_scraping", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      await apiClient.post("/start_scraping", null, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        setSuccess("Scraping started successfully")
-        fetchStatus()
-        fetchLogs()
-        setTimeout(() => setSuccess(""), 3000)
-      } else if (response.status === 401) {
+      setSuccess("Scraping started successfully")
+      fetchStatus()
+      fetchLogs()
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      console.error("Failed to start scraping:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        const errorData = await response.json()
-        setError(errorData.detail || "Failed to start scraping")
+        setError(err.message || "Failed to start scraping")
       }
-    } catch (err) {
-      setError("Network error")
     } finally {
       setIsLoading(false)
     }
@@ -170,27 +177,27 @@ export default function ScrapingPage() {
 
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/stop_scraping", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      if (!token) {
+        clearAllCookies()
+        router.push("/")
+        return
+      }
+      await apiClient.post("/stop_scraping", null, {
+        Authorization: `Bearer ${token}`,
       })
 
-      if (response.ok) {
-        setSuccess("Stop signal sent successfully")
-        fetchStatus()
-        fetchLogs()
-        setTimeout(() => setSuccess(""), 3000)
-      } else if (response.status === 401) {
+      setSuccess("Stop signal sent successfully")
+      fetchStatus()
+      fetchLogs()
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      console.error("Failed to stop scraping:", err)
+      if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
       } else {
-        const errorData = await response.json()
-        setError(errorData.detail || "Failed to stop scraping")
+        setError(err.message || "Failed to stop scraping")
       }
-    } catch (err) {
-      setError("Network error")
     } finally {
       setIsLoading(false)
     }
