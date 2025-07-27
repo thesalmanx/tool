@@ -17,7 +17,7 @@ function getApiUrl() {
   } else {
     // Production: Assume backend is on the same domain but on port 8000
     // Adjust port if your production backend uses a different port or sub-domain
-    return `${protocol}//${currentHost}:8000`;
+    return `${protocol}//${currentHost}`;
   }
 }
 

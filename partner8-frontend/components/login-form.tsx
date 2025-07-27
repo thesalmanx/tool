@@ -289,9 +289,7 @@ export default function LoginForm() {
             <Button onClick={handleLoginSubmit} className="w-full" disabled={isLoading}>
               {isLoading ? "Signing in..." : "Sign In"}
             </Button>
-            <div className="text-sm text-gray-600 text-center mt-4">
-              <p>Default admin credentials: admin / admin123</p>
-            </div>
+            
           </div>
         </TabsContent>
 
