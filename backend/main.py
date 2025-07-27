@@ -983,7 +983,9 @@ app = FastAPI(
     title="Partners8 Management System",
     description="A comprehensive system with user management, AI chat with data query capabilities, and data scraping",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None
 )
 
 # CORS middleware
