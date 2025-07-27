@@ -62,6 +62,8 @@ export default function UsersPage() {
     role: "user",
     is_approved: true,
   })
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -78,6 +80,9 @@ export default function UsersPage() {
         router.push("/dashboard")
         return
       }
+
+      setCurrentUserId(getCookie("user_id"))
+      setCurrentUserEmail(getCookie("user_email"))
 
       await fetchUsers()
     }
@@ -329,6 +334,26 @@ export default function UsersPage() {
           <Alert>
             <AlertDescription>{success}</AlertDescription>
           </Alert>
+        )}
+
+        {/* Current User Info */}
+        {(currentUserId || currentUserEmail) && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Your Info</CardTitle>
+              <CardDescription>Details of the currently logged-in user</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 text-sm">
+                {currentUserId && (
+                  <p><strong>User ID:</strong> {currentUserId}</p>
+                )}
+                {currentUserEmail && (
+                  <p><strong>Email:</strong> {currentUserEmail}</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         <Card>

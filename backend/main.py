@@ -991,7 +991,11 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=[
+        "http://localhost:3000",  # Next.js development server
+        "http://localhost:8000",  # If frontend is served by FastAPI in development
+        "https://investmentapp.partners8.com" # Your production domain
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
