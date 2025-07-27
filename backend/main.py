@@ -984,7 +984,7 @@ app = FastAPI(
     description="A comprehensive system with user management, AI chat with data query capabilities, and data scraping",
     version="2.0.0",
     lifespan=lifespan,
-    docs_url=None,
+    # docs_url=None,s
     redoc_url=None
 )
 
