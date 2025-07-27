@@ -15,7 +15,10 @@ const setCookie = (name: string, value: string, days: number = 7) => {
   try {
     const expires = new Date()
     expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000)
-    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;secure;samesite=strict`
+    // Remove secure flag for local development, add it back for production
+    const isProduction = window.location.protocol === 'https:'
+    const secureFlag = isProduction ? ';secure' : ''
+    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/${secureFlag};samesite=lax`
   } catch (error) {
     console.error('Error setting cookie:', error)
   }
@@ -39,7 +42,9 @@ const getCookie = (name: string): string | null => {
 
 const deleteCookie = (name: string) => {
   try {
-    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; secure; samesite=strict`
+    const isProduction = window.location.protocol === 'https:'
+    const secureFlag = isProduction ? '; secure' : ''
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/${secureFlag}; samesite=lax`
   } catch (error) {
     console.error('Error deleting cookie:', error)
   }
@@ -54,7 +59,8 @@ const clearAuthData = () => {
     
     // Clear localStorage if available
     if (typeof Storage !== "undefined" && window.localStorage) {
-      localStorage.clear()
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('user_data')
     }
   } catch (error) {
     console.error('Error clearing auth data:', error)
@@ -78,7 +84,8 @@ export default function LoginForm() {
       // Clear any existing auth data first
       clearAuthData()
 
-      const formData = new FormData()
+      // Use URLSearchParams for proper form encoding
+      const formData = new URLSearchParams()
       formData.append("username", loginData.username.trim())
       formData.append("password", loginData.password)
 
@@ -86,11 +93,11 @@ export default function LoginForm() {
 
       const response = await fetch(`${API_BASE_URL}/token`, {
         method: "POST",
-        body: formData,
-        credentials: 'include', // Important for cookies
         headers: {
-          // Don't set Content-Type for FormData, let browser set it
+          "Content-Type": "application/x-www-form-urlencoded",
         },
+        body: formData.toString(),
+        // Remove credentials: 'include' to avoid CORS issues
       })
 
       console.log('Response status:', response.status)
@@ -141,7 +148,13 @@ export default function LoginForm() {
         }, 1000)
 
       } else {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred' }))
+        const errorText = await response.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+        } catch {
+          errorData = { detail: errorText || 'Unknown error occurred' }
+        }
         console.error('Login failed:', errorData)
         setError(errorData.detail || `Login failed (${response.status})`)
       }
@@ -163,6 +176,27 @@ export default function LoginForm() {
     setError("")
     setSuccess("")
 
+    // Basic validation
+    if (!signupData.username.trim() || !signupData.email.trim() || !signupData.password) {
+      setError("All fields are required")
+      setIsLoading(false)
+      return
+    }
+
+    if (signupData.password.length < 6) {
+      setError("Password must be at least 6 characters")
+      setIsLoading(false)
+      return
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(signupData.email.trim())) {
+      setError("Please enter a valid email address")
+      setIsLoading(false)
+      return
+    }
+
     try {
       console.log('Attempting signup to:', `${API_BASE_URL}/signup`)
 
@@ -171,7 +205,6 @@ export default function LoginForm() {
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: 'include',
         body: JSON.stringify({
           username: signupData.username.trim(),
           email: signupData.email.trim(),
@@ -186,7 +219,13 @@ export default function LoginForm() {
         setSuccess(data.message || "Account created successfully! Please wait for admin approval.")
         setSignupData({ username: "", email: "", password: "" })
       } else {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred' }))
+        const errorText = await response.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+        } catch {
+          errorData = { detail: errorText || 'Unknown error occurred' }
+        }
         console.error('Signup failed:', errorData)
         setError(errorData.detail || `Signup failed (${response.status})`)
       }
@@ -263,6 +302,9 @@ export default function LoginForm() {
             <Button onClick={handleLoginSubmit} className="w-full" disabled={isLoading}>
               {isLoading ? "Signing in..." : "Sign In"}
             </Button>
+            <div className="text-sm text-gray-600 text-center mt-4">
+              <p>Default admin credentials: admin / admin123</p>
+            </div>
           </div>
         </TabsContent>
 
