@@ -57,11 +57,7 @@ const clearAuthData = () => {
     const authCookies = ["access_token", "username", "user_role", "user_id", "user_email"]
     authCookies.forEach(cookie => deleteCookie(cookie))
     
-    // Clear localStorage if available
-    if (typeof Storage !== "undefined" && window.localStorage) {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('user_data')
-    }
+    
   } catch (error) {
     console.error('Error clearing auth data:', error)
   }
@@ -128,16 +124,7 @@ export default function LoginForm() {
           // Continue anyway, the redirect might still work
         }
 
-        // Store in localStorage as backup (if available)
-        try {
-          if (typeof Storage !== "undefined" && window.localStorage) {
-            localStorage.setItem('access_token', tokenValue)
-            localStorage.setItem('user_data', JSON.stringify(userInfo))
-          }
-        } catch (storageError) {
-          console.error('Error setting localStorage:', storageError)
-          // Continue anyway
-        }
+        
 
         setSuccess("Login successful! Redirecting...")
         
