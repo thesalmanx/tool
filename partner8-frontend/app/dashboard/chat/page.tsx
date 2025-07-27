@@ -239,55 +239,16 @@ export default function ChatPage() {
       URL.revokeObjectURL(url)
     } else if (format === 'excel') {
       // Create workbook and worksheet
-      const workbook = {
-        SheetNames: ['Data'],
-        Sheets: {
-          'Data': {}
-        }
-      }
-
-      // Add headers
-      headers.forEach((header, colIndex) => {
-        const cellRef = String.fromCharCode(65 + colIndex) + '1'
-        workbook.Sheets['Data'][cellRef] = {
-          v: header,
-          t: 's',
-          s: {
-            font: { bold: true },
-            fill: { fgColor: { rgb: 'E5E5E5' } }
-          }
-        }
-      })
-
-      // Add data rows
-      data.forEach((row, rowIndex) => {
-        headers.forEach((header, colIndex) => {
-          const cellRef = String.fromCharCode(65 + colIndex) + (rowIndex + 2)
-          const value = row[header]
-          
-          if (typeof value === 'number') {
-            workbook.Sheets['Data'][cellRef] = { v: value, t: 'n' }
-          } else if (value instanceof Date) {
-            workbook.Sheets['Data'][cellRef] = { v: value, t: 'd' }
-          } else {
-            workbook.Sheets['Data'][cellRef] = { v: value || '', t: 's' }
-          }
-        })
-      })
-
-      // Set worksheet range
-      const range = `A1:${String.fromCharCode(64 + headers.length)}${data.length + 1}`
-      workbook.Sheets['Data']['!ref'] = range
+      const ws: XLSX.WorkSheet = XLSX.utils.json_to_sheet(data)
+      const workbook = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(workbook, ws, 'Data')
 
       // Auto-width columns
-      const colWidths = headers.map((header, colIndex) => {
-        const headerWidth = header.length
-        const maxDataWidth = Math.max(...data.map(row => 
-          String(row[header] || '').length
-        ))
-        return { wch: Math.max(headerWidth, maxDataWidth, 10) }
+      const colWidths = headers.map((header) => {
+        const maxDataWidth = Math.max(...data.map(row => String(row[header] || '').length))
+        return { wch: Math.max(header.length, maxDataWidth, 10) }
       })
-      workbook.Sheets['Data']['!cols'] = colWidths
+      ws['!cols'] = colWidths
 
       // Convert to binary string
       const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'binary' })

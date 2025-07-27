@@ -46,6 +46,9 @@ const deleteCookie = (name: string) => {
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const itemsPerPage = 10 // 10 entries at a time
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -89,10 +92,10 @@ export default function UsersPage() {
     deleteCookie("user_email")
   }
 
-  const fetchUsers = async () => {
+  const fetchUsers = async (page: number = currentPage) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/users", {
+      const response = await fetch(`http://localhost:8000/users?page=${page}&limit=${itemsPerPage}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -100,7 +103,9 @@ export default function UsersPage() {
 
       if (response.ok) {
         const data = await response.json()
-        setUsers(data)
+        setUsers(data.users)
+        setTotalPages(Math.ceil(data.total / itemsPerPage))
+        setCurrentPage(data.page)
       } else if (response.status === 401) {
         clearAllCookies()
         router.push("/")
@@ -383,6 +388,27 @@ export default function UsersPage() {
                 ))}
               </TableBody>
             </Table>
+            <div className="flex justify-between items-center mt-4">
+              <Button
+                onClick={() => fetchUsers(currentPage - 1)}
+                disabled={currentPage === 1 || isLoading}
+                variant="outline"
+                size="sm"
+              >
+                Previous
+              </Button>
+              <span className="text-sm text-gray-600">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                onClick={() => fetchUsers(currentPage + 1)}
+                disabled={currentPage === totalPages || isLoading}
+                variant="outline"
+                size="sm"
+              >
+                Next
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

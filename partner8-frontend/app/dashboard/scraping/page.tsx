@@ -47,6 +47,9 @@ const deleteCookie = (name: string) => {
 export default function ScrapingPage() {
   const [status, setStatus] = useState<ScrapingStatus>({ status: "idle" })
   const [logs, setLogs] = useState<ScrapingLog[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const itemsPerPage = 10 // 10 entries at a time
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -105,17 +108,19 @@ export default function ScrapingPage() {
     }
   }
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (page: number = currentPage) => {
     try {
       const token = getCookie("access_token")
-      const response = await fetch("http://localhost:8000/scraping_logs", {
+      const response = await fetch(`http://localhost:8000/scraping_logs?page=${page}&limit=${itemsPerPage}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
       if (response.ok) {
         const data = await response.json()
-        setLogs(data)
+        setLogs(data.logs)
+        setTotalPages(Math.ceil(data.total / itemsPerPage))
+        setCurrentPage(data.page)
       } else if (response.status === 401) {
         clearAllCookies()
         router.push("/")
@@ -412,14 +417,7 @@ export default function ScrapingPage() {
                 </Button>
               </div>
 
-              {/* Control Tips */}
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                <h4 className="text-sm font-medium text-blue-800 mb-2">Control Tips:</h4>
-                <ul className="text-xs text-blue-700 space-y-1">
-                  <li>• Stop will save progress and allow restart later</li>
-                  <li>• All progress is automatically saved</li>
-                </ul>
-              </div>
+             
             </CardContent>
           </Card>
         </div>
@@ -431,7 +429,7 @@ export default function ScrapingPage() {
           </CardHeader>
           <CardContent>
             {logs.length > 0 ? (
-              <Table>
+              <><Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Status</TableHead>
@@ -459,15 +457,15 @@ export default function ScrapingPage() {
                       <TableCell>
                         {log.completed_at
                           ? `${Math.round(
-                              (new Date(log.completed_at).getTime() - new Date(log.started_at).getTime()) / 1000,
-                            )}s`
+                            (new Date(log.completed_at).getTime() - new Date(log.started_at).getTime()) / 1000
+                          )}s`
                           : "-"}
                       </TableCell>
                       <TableCell>
                         {log.error_message && (
                           <span className="text-xs text-red-600 truncate max-w-xs" title={log.error_message}>
-                            {log.error_message.length > 50 
-                              ? `${log.error_message.substring(0, 50)}...` 
+                            {log.error_message.length > 50
+                              ? `${log.error_message.substring(0, 50)}...`
                               : log.error_message}
                           </span>
                         )}
@@ -475,7 +473,27 @@ export default function ScrapingPage() {
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+              </Table><div className="flex justify-between items-center mt-4">
+                  <Button
+                    onClick={() => fetchLogs(currentPage - 1)}
+                    disabled={currentPage === 1 || isLoading}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-gray-600">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <Button
+                    onClick={() => fetchLogs(currentPage + 1)}
+                    disabled={currentPage === totalPages || isLoading}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Next
+                  </Button>
+                </div></>
             ) : (
               <div className="text-center py-8 text-gray-500">
                 <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />

@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, EmailStr
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float # Added Float
 from sqlalchemy.orm import declarative_base
@@ -162,7 +164,7 @@ def cleanup_progress_file():
         logger.error(f"Failed to cleanup progress file: {e}")
 
 # 4. Enhanced scraping process function
-def run_scraping_script():
+def run_scraping_script(user_id: int):
     """Run the scraping script in a separate process with progress tracking"""
     global scraping_process, scraping_status
 
@@ -252,6 +254,16 @@ def run_scraping_script():
                 if scraping_status.status != "stopped":
                     scraping_status.status = "failed"
                     scraping_status.error_message = "Error getting process result"
+
+        # Log final status to DB
+        log_scraping_operation(
+            user_id,
+            scraping_status.status,
+            scraping_status.error_message,
+            scraping_status.records_processed,
+            scraping_status.current_step,
+            scraping_status.step_name
+        )
 
         # Cleanup
         try:
@@ -1102,13 +1114,18 @@ async def create_user(
 
     return {"message": "User created successfully", "user_id": new_user.id}
 
-@app.get("/users", response_model=List[UserOut])
+@app.get("/users", response_model=dict)
 async def get_users(
     current_user: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    page: int = 1,
+    limit: int = 10
 ):
-    users = db.query(User).all()
-    return users
+    """Get paginated list of users"""
+    offset = (page - 1) * limit
+    total_users = db.query(User).count()
+    users = db.query(User).offset(offset).limit(limit).all()
+    return {"total": total_users, "page": page, "limit": limit, "users": [UserOut.from_orm(user) for user in users]}
 
 @app.put("/users/{user_id}")
 async def update_user(
@@ -1353,21 +1370,32 @@ async def get_scraping_status(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/scraping_logs")
-async def get_scraping_logs(current_user: dict = Depends(get_current_user)):
-    """Get scraping history logs"""
+async def get_scraping_logs(
+    current_user: dict = Depends(get_current_user),
+    page: int = 1,
+    limit: int = 10
+):
+    """Get paginated scraping history logs"""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
     try:
         conn = sqlite3.connect("partners8_data.db")
         cursor = conn.cursor()
+
+        offset = (page - 1) * limit
+
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM scraping_logs")
+        total_logs = cursor.fetchone()[0]
+
         cursor.execute('''
             SELECT id, status, started_by, started_at, completed_at, error_message, records_processed,
                    current_step, total_steps, step_name, progress_percentage
             FROM scraping_logs
             ORDER BY started_at DESC
-            LIMIT 50
-        ''')
+            LIMIT ? OFFSET ?
+        ''', (limit, offset))
 
         logs = []
         for row in cursor.fetchall():
@@ -1386,7 +1414,7 @@ async def get_scraping_logs(current_user: dict = Depends(get_current_user)):
             }
             logs.append(log)
         conn.close()
-        return logs
+        return {"total": total_logs, "page": page, "limit": limit, "logs": logs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
@@ -1407,7 +1435,7 @@ async def start_scraping(current_user: dict = Depends(get_current_user)):
         log_scraping_operation(current_user.id, "started")
 
         # Start scraping in a separate thread
-        scraping_thread = threading.Thread(target=run_scraping_script, daemon=True)
+        scraping_thread = threading.Thread(target=run_scraping_script, args=(current_user.id,), daemon=True)
         scraping_thread.start()
 
         return {"message": "Scraping started successfully", "status": "running"}
@@ -1853,6 +1881,25 @@ async def get_api_info():
             ]
         }
     }
+
+frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "partner8-frontend", "out")
+
+@app.get("/dashboard")
+async def serve_dashboard():
+    return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
+
+@app.get("/dashboard/{path:path}")
+async def serve_dashboard_subpaths(path: str):
+    # This will serve files like /dashboard/chat, /dashboard/users, etc.
+    # It will look for dashboard/chat.html, dashboard/users.html etc.
+    # If not found, it will fall back to dashboard.html
+    file_path = os.path.join(frontend_dir, "dashboard", f"{path}.html")
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
+
+# Serve static files from the Next.js build
+app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn

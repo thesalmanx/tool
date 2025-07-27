@@ -1036,6 +1036,7 @@ class Partners8Pipeline:
             # Step 3: Fetch HUD data
             if not self.step3_fetch_hud_data(): return False
 
+
             # Step 4: Fetch NAR data
             if not self.step4_fetch_nar_data(): return False
 
