@@ -1,0 +1,14 @@
+/backend/.vscode/
+/backend/.env
+/backend/*.pkl
+
+/partner8-frontend/.next
+/partner8-frontend/node_modules
+/partner8-frontend/.env
+/partner8-frontend/.env.local
+/partner8-frontend/.env.development.local
+/partner8-frontend/.env.test.local
+/partner8-frontend/.env.production.local
+/partner8-frontend/next.config.js
+/partner8-frontend/next-env.d.ts
+/partner8-frontend/next-env.d.ts
