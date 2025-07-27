@@ -11,6 +11,9 @@ interface DashboardLayoutProps {
   children: React.ReactNode
 }
 
+// Use the same API base URL as the login form
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://investmentapp.partners8.com"
+
 // Helper functions for cookie management
 const getCookie = (name: string): string | null => {
   const value = `; ${document.cookie}`
@@ -47,8 +50,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           return
         }
         console.log("DashboardLayout: Token found, attempting to verify with backend.")
+        console.log("DashboardLayout: Using API URL:", `${API_BASE_URL}/verify-token`)
 
-        const response = await fetch("http://localhost:8000/verify-token", {
+        const response = await fetch(`${API_BASE_URL}/verify-token`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
