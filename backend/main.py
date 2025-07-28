@@ -1,8 +1,6 @@
-import asyncio
 import subprocess
 import threading
 import os
-import signal
 import time
 import json
 from datetime import datetime
@@ -168,7 +166,23 @@ def cleanup_progress_file():
 # 4. Enhanced scraping process function
 def run_scraping_script(user_id: int):
     """Run the scraping script in a separate process with enhanced error handling"""
-    global scraping_process, scraping_status
+    
+    # Initialize global variables
+    scraping_process = None
+    
+    # Initialize scraping status
+    class ScrapingStatus:
+        def __init__(self):
+            self.status = "idle"
+            self.started_at = None
+            self.completed_at = None
+            self.error_message = None
+            self.records_processed = 0
+            self.current_step = 0
+            self.total_steps = 6
+            self.step_name = "Initializing"
+    
+    scraping_status = ScrapingStatus()
 
     try:
         # Update status to running
@@ -184,35 +198,49 @@ def run_scraping_script(user_id: int):
         # Write initial progress
         try:
             write_progress_file("running", 0, "Initializing", 0)
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to write initial progress: {e}")
+
+        # Verify script exists
+        script_path = "scrape.py"
+        if not os.path.exists(script_path):
+            error_msg = f"Script not found: {script_path}"
+            logger.error(error_msg)
+            scraping_status.status = "failed"
+            scraping_status.error_message = error_msg
+            write_progress_file("failed", 0, error_msg)
+            return error_msg
 
         # Start the scraper script with enhanced error capture
         try:
-            script_path = "scrape.py"
+            logger.info(f"Starting scraping script: {script_path}")
             
-            # Enhanced subprocess with better error handling
+            # Get the Python executable
+            python_executable = sys.executable
+            logger.info(f"Using Python executable: {python_executable}")
+            
+            # Start subprocess with proper error handling
             scraping_process = subprocess.Popen(
-                [sys.executable, script_path],
+                [python_executable, script_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.PIPE,
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
-                # Add environment variables for better error reporting
-                env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+                env={**os.environ, 'PYTHONUNBUFFERED': '1'},
+                cwd=os.getcwd()  # Ensure working directory is set
             )
             
             logger.info(f"📍 Started scraping process with PID: {scraping_process.pid}")
             
-        except FileNotFoundError:
-            error_msg = f"Scraping script not found: {script_path}"
+        except FileNotFoundError as e:
+            error_msg = f"Python executable or script not found: {e}"
             logger.error(error_msg)
             scraping_status.status = "failed"
             scraping_status.error_message = error_msg
             write_progress_file("failed", 0, error_msg)
-            return
+            return error_msg
             
         except Exception as e:
             error_msg = f"Error starting scraping script: {e}"
@@ -220,123 +248,110 @@ def run_scraping_script(user_id: int):
             scraping_status.status = "failed"
             scraping_status.error_message = error_msg
             write_progress_file("failed", 0, error_msg)
-            return
+            return error_msg
 
         # Monitor the process with enhanced error capture
         stdout_lines = []
         stderr_lines = []
         
+        # Read output in a non-blocking way
+        import threading
+        import queue
+        
+        def read_output(pipe, output_queue, stream_name):
+            """Read output from subprocess pipe"""
+            try:
+                while True:
+                    line = pipe.readline()
+                    if not line:
+                        break
+                    output_queue.put((stream_name, line.strip()))
+            except Exception as e:
+                output_queue.put((stream_name, f"Error reading {stream_name}: {e}"))
+        
+        # Create queues and threads for reading output
+        output_queue = queue.Queue()
+        stdout_thread = threading.Thread(
+            target=read_output, 
+            args=(scraping_process.stdout, output_queue, 'stdout')
+        )
+        stderr_thread = threading.Thread(
+            target=read_output, 
+            args=(scraping_process.stderr, output_queue, 'stderr')
+        )
+        
+        stdout_thread.daemon = True
+        stderr_thread.daemon = True
+        stdout_thread.start()
+        stderr_thread.start()
+        
+        # Monitor process
         while scraping_process is not None and scraping_process.poll() is None:
             # Check if we should stop
             if scraping_status.status == "stopped":
+                logger.info("Stop signal received, terminating process")
                 break
-                
-            # Read stdout and stderr non-blocking
+            
+            # Read any available output
             try:
-                # Read any available output
-                import select
-                import sys
-                
-                if hasattr(select, 'select'):  # Unix-like systems
-                    ready, _, _ = select.select([scraping_process.stdout, scraping_process.stderr], [], [], 0.1)
-                    
-                    for stream in ready:
-                        if stream == scraping_process.stdout:
-                            line = stream.readline()
-                            if line:
-                                stdout_lines.append(line.strip())
-                                logger.info(f"STDOUT: {line.strip()}")
-                        elif stream == scraping_process.stderr:
-                            line = stream.readline()
-                            if line:
-                                stderr_lines.append(line.strip())
-                                logger.error(f"STDERR: {line.strip()}")
-                else:
-                    # Windows fallback - non-blocking read attempt
+                while True:
                     try:
-                        # Try to read with timeout
-                        import threading
-                        import queue
-                        
-                        def read_stream(stream, queue_obj, stream_name):
-                            try:
-                                line = stream.readline()
-                                if line:
-                                    queue_obj.put((stream_name, line.strip()))
-                            except:
-                                pass
-                        
-                        stdout_queue = queue.Queue()
-                        stderr_queue = queue.Queue()
-                        
-                        stdout_thread = threading.Thread(target=read_stream, args=(scraping_process.stdout, stdout_queue, 'stdout'))
-                        stderr_thread = threading.Thread(target=read_stream, args=(scraping_process.stderr, stderr_queue, 'stderr'))
-                        
-                        stdout_thread.daemon = True
-                        stderr_thread.daemon = True
-                        stdout_thread.start()
-                        stderr_thread.start()
-                        
-                        # Check queues
-                        try:
-                            while True:
-                                stream_name, line = stdout_queue.get_nowait()
-                                stdout_lines.append(line)
-                                logger.info(f"STDOUT: {line}")
-                        except queue.Empty:
-                            pass
-                            
-                        try:
-                            while True:
-                                stream_name, line = stderr_queue.get_nowait()
-                                stderr_lines.append(line)
-                                logger.error(f"STDERR: {line}")
-                        except queue.Empty:
-                            pass
-                            
-                    except:
-                        pass  # Fallback for any threading issues
-                        
+                        stream_name, line = output_queue.get_nowait()
+                        if stream_name == 'stdout':
+                            stdout_lines.append(line)
+                            logger.info(f"SCRAPE STDOUT: {line}")
+                        else:
+                            stderr_lines.append(line)
+                            logger.error(f"SCRAPE STDERR: {line}")
+                    except queue.Empty:
+                        break
             except Exception as e:
-                logger.debug(f"Error reading process output: {e}")
+                logger.debug(f"Error reading output queue: {e}")
             
             # Read progress from file
             try:
                 progress_data = read_progress_file()
                 if progress_data:
-                    scraping_status.current_step = progress_data.get("current_step")
-                    scraping_status.step_name = progress_data.get("step_name")
-                    scraping_status.records_processed = progress_data.get("records_processed")
-                    scraping_status.progress_percentage = progress_data.get("progress_percentage")
+                    scraping_status.current_step = progress_data.get("current_step", 0)
+                    scraping_status.step_name = progress_data.get("step_name", "Processing")
+                    scraping_status.records_processed = progress_data.get("records_processed", 0)
                     
                     # Update status if changed
                     new_status = progress_data.get("status")
                     if new_status and new_status != scraping_status.status and new_status != "stopped":
                         scraping_status.status = new_status
-            except:
-                pass  # Ignore file read errors
+            except Exception as e:
+                logger.debug(f"Error reading progress file: {e}")
             
             time.sleep(1)  # Check every second
 
         # Enhanced completion handling
         if scraping_process is not None:
             try:
-                # Get final output
-                remaining_stdout, remaining_stderr = scraping_process.communicate(timeout=10)
+                # Wait for process to complete with timeout
+                try:
+                    return_code = scraping_process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Process didn't terminate cleanly, forcing termination")
+                    scraping_process.kill()
+                    return_code = scraping_process.wait()
                 
-                if remaining_stdout:
-                    for line in remaining_stdout.split('\n'):
-                        if line.strip():
-                            stdout_lines.append(line.strip())
-                            logger.info(f"FINAL STDOUT: {line.strip()}")
-                
-                if remaining_stderr:
-                    for line in remaining_stderr.split('\n'):
-                        if line.strip():
-                            stderr_lines.append(line.strip())
-                            logger.error(f"FINAL STDERR: {line.strip()}")
-                
-                return_code = scraping_process.returncode
+                # Read any remaining output
+                try:
+                    remaining_stdout, remaining_stderr = scraping_process.communicate(timeout=5)
+                    if remaining_stdout:
+                        for line in remaining_stdout.split('\n'):
+                            if line.strip():
+                                stdout_lines.append(line.strip())
+                                logger.info(f"FINAL STDOUT: {line.strip()}")
+                    
+                    if remaining_stderr:
+                        for line in remaining_stderr.split('\n'):
+                            if line.strip():
+                                stderr_lines.append(line.strip())
+                                logger.error(f"FINAL STDERR: {line.strip()}")
+                except subprocess.TimeoutExpired:
+                    logger.warning("Timeout reading final output")
                 
                 # Update final status with detailed error information
                 scraping_status.completed_at = datetime.now()
@@ -346,11 +361,11 @@ def run_scraping_script(user_id: int):
                     # Try to get final record count
                     try:
                         if os.path.exists("partners8_final_data.csv"):
-                            import pandas as pd
                             df = pd.read_csv("partners8_final_data.csv")
                             scraping_status.records_processed = len(df)
-                    except:
-                        pass
+                            logger.info(f"Final dataset contains {len(df)} records")
+                    except Exception as e:
+                        logger.warning(f"Could not read final CSV: {e}")
                 else:
                     if scraping_status.status != "stopped":
                         scraping_status.status = "failed"
@@ -360,54 +375,59 @@ def run_scraping_script(user_id: int):
                         
                         # Add stderr information
                         if stderr_lines:
-                            error_parts.append("STDERR output:")
-                            error_parts.extend(stderr_lines[-10:])  # Last 10 lines
+                            error_parts.append("Recent errors:")
+                            error_parts.extend(stderr_lines[-5:])  # Last 5 lines
                         
                         # Add relevant stdout information
                         error_stdout = [line for line in stdout_lines if any(keyword in line.lower() 
                                       for keyword in ['error', 'exception', 'failed', 'traceback'])]
                         if error_stdout:
-                            error_parts.append("Error-related output:")
-                            error_parts.extend(error_stdout[-5:])  # Last 5 error lines
+                            error_parts.append("Error details:")
+                            error_parts.extend(error_stdout[-3:])  # Last 3 error lines
                         
                         scraping_status.error_message = "\n".join(error_parts)
                         
                         # Log the detailed error
                         logger.error(f"Scraping failed with exit code {return_code}")
-                        logger.error(f"STDERR: {chr(10).join(stderr_lines[-5:]) if stderr_lines else 'No stderr output'}")
-                        logger.error(f"Recent STDOUT: {chr(10).join(stdout_lines[-5:]) if stdout_lines else 'No stdout output'}")
+                        if stderr_lines:
+                            logger.error(f"Recent stderr: {stderr_lines[-3:]}")
+                        if error_stdout:
+                            logger.error(f"Error output: {error_stdout[-3:]}")
                         
-            except subprocess.TimeoutExpired:
-                # Process didn't terminate cleanly
-                scraping_process.kill()
-                scraping_process.wait()
-                scraping_status.status = "failed"
-                scraping_status.error_message = "Process timed out and was forcefully terminated"
-                logger.error("Scraping process timed out during termination")
-                
             except Exception as e:
                 if scraping_status.status != "stopped":
                     scraping_status.status = "failed"
-                    scraping_status.error_message = f"Error getting process result: {str(e)}"
-                    logger.error(f"Error handling process completion: {e}")
+                    scraping_status.error_message = f"Error handling process completion: {str(e)}"
+                    logger.error(f"Error during process completion: {e}")
 
-        # Log final status to DB with enhanced error info
-        log_scraping_operation(
-            user_id,
-            scraping_status.status,
-            scraping_status.error_message,
-            scraping_status.records_processed,
-            scraping_status.current_step,
-            scraping_status.step_name
-        )
+        # Log final status to DB
+        try:
+            log_scraping_operation(
+                user_id,
+                scraping_status.status,
+                scraping_status.error_message,
+                scraping_status.records_processed,
+                scraping_status.current_step,
+                scraping_status.step_name
+            )
+        except Exception as e:
+            logger.error(f"Failed to log final status: {e}")
 
         # Cleanup
         try:
             cleanup_progress_file()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Error cleaning up progress file: {e}")
             
         scraping_process = None
+        
+        # Return status message
+        if scraping_status.status == "completed":
+            return f"Scraping completed successfully! Processed {scraping_status.records_processed} records."
+        elif scraping_status.status == "failed":
+            return f"Scraping failed: {scraping_status.error_message}"
+        else:
+            return f"Scraping stopped with status: {scraping_status.status}"
 
     except Exception as e:
         scraping_status.status = "failed"
@@ -421,11 +441,29 @@ def run_scraping_script(user_id: int):
         logger.error(f"Full traceback: {full_traceback}")
         
         try:
+            write_progress_file("failed", scraping_status.current_step, f"Error: {str(e)}")
+        except:
+            pass
+        
+        try:
+            log_scraping_operation(
+                user_id,
+                scraping_status.status,
+                scraping_status.error_message,
+                scraping_status.records_processed,
+                scraping_status.current_step,
+                scraping_status.step_name
+            )
+        except:
+            pass
+        
+        try:
             cleanup_progress_file()
         except:
             pass
+        
         scraping_process = None
-
+        return f"Critical error: {str(e)}"
 
 # Additional debugging function to test the scrape.py script independently
 def debug_scrape_script():
@@ -1080,49 +1118,6 @@ async def search_with_google_grounding(query: str) -> Dict[str, Any]:
                 "grounding_metadata": None
             }
 
-# Background task for scraping (This is the old version, replaced by run_scraping_script)
-# This function is not used with the new progress tracking approach.
-# async def run_scraping_task(user_id: int):
-#     """Background task to run scraping"""
-#     db = SessionLocal()
-#     try:
-#         # Create scraping log
-#         log = ScrapingLog(
-#             status="running",
-#             started_by=user_id
-#         )
-#         db.add(log)
-#         db.commit()
-
-#         # Run scraping script
-#         process = subprocess.Popen(
-#             ["python3", "scrape.py"],
-#             stdout=subprocess.PIPE,
-#             stderr=subprocess.PIPE
-#         )
-
-#         stdout, stderr = process.communicate()
-
-#         # Update log
-#         log.completed_at = datetime.utcnow()
-#         if process.returncode == 0:
-#             log.status = "completed"
-#             log.records_processed = 100  # You can parse actual count from stdout
-#         else:
-#             log.status = "failed"
-#             log.error_message = stderr.decode()
-
-#         db.commit()
-
-#     except Exception as e:
-#         logger.error(f"Scraping task error: {e}")
-#         if 'log' in locals():
-#             log.status = "failed"
-#             log.error_message = str(e)
-#             log.completed_at = datetime.utcnow()
-#             db.commit()
-#     finally:
-#         db.close()
 
 # Utility functions
 def create_first_admin():
