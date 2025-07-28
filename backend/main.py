@@ -191,16 +191,20 @@ def run_scraping_script(user_id: int):
 
 
         # Start the scraper script
-        script_path = "scrape.py"
-        scraping_process = subprocess.Popen(
-            [sys.executable, script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
-        )
+        try:
+            script_path = "scrape.py"
+            scraping_process = subprocess.Popen(
+                [sys.executable, script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+        except Exception as e:
+            logger.error(f"Error starting scraping script: {e}")
+            scraping_status.status = "failed"
 
         logger.info(f"📍 Started scraping process with PID: {scraping_process.pid}")
 
