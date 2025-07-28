@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // For production, you'll need to define your API base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "0.0.0.0:8000"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL 
 
 import { setCookie, clearAuthCookies } from "../utils/cookies";
 
@@ -37,7 +37,7 @@ export default function LoginForm() {
       formData.append("password", loginData.password)
 
       console.log(API_BASE_URL)
-      const response = await fetch(`${API_BASE_URL}/token`, {
+      const response = await fetch(`/token`, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",

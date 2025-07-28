@@ -1209,11 +1209,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js development server
-        "http://localhost:8000",  # If frontend is served by FastAPI in development
-        "https://investmentapp.partners8.com" # Your production domain
-    ],
+    allow_origins=["*" ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2230,5 +2226,5 @@ app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info",reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8100, log_level="info",reload=True)
 
