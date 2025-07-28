@@ -11,23 +11,22 @@ interface DashboardLayoutProps {
   children: React.ReactNode
 }
 
-// Use the same API base URL as the login form
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://investmentapp.partners8.com"
-
 // Helper functions for cookie management
 const getCookie = (name: string): string | null => {
-  const value = `; ${document.cookie}`
-  const parts = value.split(`; ${name}=`)
-  if (parts.length === 2) return parts.pop()?.split(';').shift() || null
-  return null
-}
-
-const setCookie = (name: string, value: string, days: number = 7) => {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString()
-  document.cookie = `${name}=${value}; expires=${expires}; path=/; SameSite=Strict`
+  if (typeof document === 'undefined') return null;
+  try {
+    const value = `; ${document.cookie}`
+    const parts = value.split(`; ${name}=`)
+    if (parts.length === 2) return decodeURIComponent(parts.pop()?.split(';').shift() || '')
+    return null
+  } catch (error) {
+    console.error('Error getting cookie:', error)
+    return null
+  }
 }
 
 const deleteCookie = (name: string) => {
+  if (typeof document === 'undefined') return;
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
 }
 
@@ -39,85 +38,42 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter()
 
   useEffect(() => {
-    const verifyAuth = async () => {
-      console.log("DashboardLayout: Verifying authentication...")
-      try {
-        // Check for token in cookies instead of localStorage
-        const token = getCookie("access_token")
-        if (!token) {
-          console.log("DashboardLayout: No token found, redirecting to /")
-          router.replace("/")
-          return
-        }
-        console.log("DashboardLayout: Token found, attempting to verify with backend.")
-        console.log("DashboardLayout: Using API URL:", `${API_BASE_URL}/verify-token`)
-
-        const response = await fetch(`${API_BASE_URL}/verify-token`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        console.log("DashboardLayout: Verify token response status:", response.status)
-
-        if (response.ok) {
-          const data = await response.json()
-          console.log("DashboardLayout: Verify token response data:", data)
-
-          if (data.valid && data.user.is_approved) {
-            // Store user data in cookies
-            setCookie("username", data.user.username)
-            setCookie("user_role", data.user.role)
-            setCookie("user_id", data.user.id.toString())
-            setCookie("user_email", data.user.email)
-
-            setUserRole(data.user.role)
-            setUsername(data.user.username)
-            
-            // Handle role-based redirection
-            if (data.user.role === 'user') {
-              if (pathname === '/dashboard/scraping') {
-                router.replace("/dashboard/chat")
-                return
-              }
-              if (pathname.includes('/dashboard/users') || pathname.includes('/dashboard/scraping')) {
-                router.replace("/dashboard/chat")
-                return
-              }
-            }
-            
-            setIsLoading(false)
-            console.log("DashboardLayout: User authenticated and approved.")
-          } else {
-            console.log("DashboardLayout: Token valid but user not approved, clearing cookies and redirecting")
-            clearAllCookies()
-            router.replace("/")
-          }
-        } else if (response.status === 401 || response.status === 403) {
-          console.log(`DashboardLayout: Backend returned ${response.status}, clearing cookies and redirecting`)
-          clearAllCookies()
-          router.replace("/")
-        } else {
-          console.error("DashboardLayout: Unexpected backend response:", response.status, await response.text())
-          clearAllCookies()
-          router.replace("/")
-        }
-      } catch (error) {
-        console.error("DashboardLayout: Network or fetch error during authentication:", error)
+    const initializeDashboard = () => {
+      console.log("DashboardLayout: Initializing dashboard...")
+      
+      // Get user data from cookies (middleware already verified the token)
+      const usernameFromCookie = getCookie("username")
+      const roleFromCookie = getCookie("user_role")
+      
+      if (!usernameFromCookie || !roleFromCookie) {
+        console.log("DashboardLayout: Missing user data in cookies, redirecting to /")
         clearAllCookies()
         router.replace("/")
+        return
       }
+
+      setUserRole(roleFromCookie)
+      setUsername(usernameFromCookie)
+      
+      // Handle role-based redirection
+      if (roleFromCookie === 'user') {
+        if (pathname === '/dashboard/scraping' || pathname === '/dashboard/users') {
+          console.log("DashboardLayout: User trying to access admin page, redirecting to chat")
+          router.replace("/dashboard/chat")
+          return
+        }
+      }
+      
+      setIsLoading(false)
+      console.log("DashboardLayout: Dashboard initialized successfully")
     }
 
-    verifyAuth()
+    initializeDashboard()
   }, [router, pathname])
 
   const clearAllCookies = () => {
-    deleteCookie("access_token")
-    deleteCookie("username")
-    deleteCookie("user_role")
-    deleteCookie("user_id")
-    deleteCookie("user_email")
+    const authCookies = ["access_token", "username", "user_role", "user_id", "user_email"]
+    authCookies.forEach(cookie => deleteCookie(cookie))
   }
 
   const handleLogout = () => {
@@ -140,7 +96,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Verifying session...</p>
+          <p className="mt-4 text-gray-600">Loading dashboard...</p>
         </div>
       </div>
     )
@@ -148,18 +104,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   // Define navigation based on user role
   const navigation =
-  userRole === "user"
-    ? [
-        { name: "Dashboard", href: "/dashboard", icon: Home },
-        { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
-      ]
-    : [
-        { name: "Dashboard", href: "/dashboard", icon: Home },
-        { name: "Users", href: "/dashboard/users", icon: Users },
-        { name: "Scraping", href: "/dashboard/scraping", icon: Play },
-        { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
-      ];
-
+    userRole === "user"
+      ? [
+          { name: "Dashboard", href: "/dashboard", icon: Home },
+          { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
+        ]
+      : [
+          { name: "Dashboard", href: "/dashboard", icon: Home },
+          { name: "Users", href: "/dashboard/users", icon: Users },
+          { name: "Scraping", href: "/dashboard/scraping", icon: Play },
+          { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
+        ];
 
   const Sidebar = () => (
     <div className="flex h-full flex-col">

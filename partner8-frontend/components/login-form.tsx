@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,36 +16,16 @@ const setCookie = (name: string, value: string, days: number = 7) => {
   try {
     const expires = new Date()
     expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000)
-    // Remove secure flag for local development, add it back for production
-    const isProduction = window.location.protocol === 'https:'
-    const secureFlag = isProduction ? ';secure' : ''
-    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/${secureFlag};samesite=lax`
+    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;samesite=lax`
+    console.log(`Cookie set: ${name}`)
   } catch (error) {
     console.error('Error setting cookie:', error)
   }
 }
 
-const getCookie = (name: string): string | null => {
-  try {
-    const nameEQ = name + "="
-    const ca = document.cookie.split(';')
-    for (let i = 0; i < ca.length; i++) {
-      let c = ca[i]
-      while (c.charAt(0) === ' ') c = c.substring(1, c.length)
-      if (c.indexOf(nameEQ) === 0) return decodeURIComponent(c.substring(nameEQ.length, c.length))
-    }
-    return null
-  } catch (error) {
-    console.error('Error getting cookie:', error)
-    return null
-  }
-}
-
 const deleteCookie = (name: string) => {
   try {
-    const isProduction = window.location.protocol === 'https:'
-    const secureFlag = isProduction ? '; secure' : ''
-    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/${secureFlag}; samesite=lax`
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=lax`
   } catch (error) {
     console.error('Error deleting cookie:', error)
   }
@@ -56,8 +37,7 @@ const clearAuthData = () => {
     // Clear cookies
     const authCookies = ["access_token", "username", "user_role", "user_id", "user_email"]
     authCookies.forEach(cookie => deleteCookie(cookie))
-    
-    
+    console.log("Auth data cleared")
   } catch (error) {
     console.error('Error clearing auth data:', error)
   }
@@ -69,7 +49,7 @@ export default function LoginForm() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const router = useRouter()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,11 +74,9 @@ export default function LoginForm() {
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: formData.toString(),
-        // Remove credentials: 'include' to avoid CORS issues
       })
 
       console.log('Response status:', response.status)
-      console.log('Response headers:', Object.fromEntries(response.headers.entries()))
 
       if (response.ok) {
         const data = await response.json()
@@ -119,18 +97,22 @@ export default function LoginForm() {
           setCookie("user_role", userInfo.role, 7)
           setCookie("user_id", userInfo.id.toString(), 7)
           setCookie("user_email", userInfo.email, 7)
-          console.log('Cookies set successfully')
+          console.log('All cookies set successfully')
         } catch (cookieError) {
           console.error('Error setting cookies:', cookieError)
-          // Continue anyway, the redirect might still work
+          throw new Error('Failed to save authentication data')
         }
 
-        setSuccess("Login successful! You are now logged in.")
+        setSuccess("Login successful! Redirecting...")
         
         // Clear the form
         setLoginData({ username: "", password: "" })
         
-        // NO REDIRECT - just show success message
+        // Small delay to show success message, then redirect
+        setTimeout(() => {
+          console.log('Redirecting to dashboard...')
+          router.push("/dashboard")
+        }, 1000)
 
       } else {
         const errorText = await response.text()
@@ -287,7 +269,6 @@ export default function LoginForm() {
             <Button onClick={handleLoginSubmit} className="w-full" disabled={isLoading}>
               {isLoading ? "Signing in..." : "Sign In"}
             </Button>
-            
           </div>
         </TabsContent>
 

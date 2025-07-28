@@ -47,18 +47,6 @@ interface DatabaseInfo {
   message?: string
 }
 
-// Helper functions for cookie management
-const getCookie = (name: string): string | null => {
-  const value = `; ${document.cookie}`
-  const parts = value.split(`; ${name}=`)
-  if (parts.length === 2) return parts.pop()?.split(';').shift() || null
-  return null
-}
-
-const deleteCookie = (name: string) => {
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
-}
-
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputMessage, setInputMessage] = useState("")
@@ -71,12 +59,6 @@ export default function ChatPage() {
   const router = useRouter()
 
   useEffect(() => {
-    const token = getCookie("access_token")
-    if (!token) {
-      router.push("/")
-      return
-    }
-
     loadDatabaseInfo()
 
     setMessages([
@@ -87,7 +69,7 @@ export default function ChatPage() {
         timestamp: new Date(),
       },
     ])
-  }, [router])
+  }, [])
 
   useEffect(() => {
     scrollToBottom()
@@ -97,32 +79,13 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
-  const clearAllCookies = () => {
-    deleteCookie("access_token")
-    deleteCookie("username")
-    deleteCookie("user_role")
-    deleteCookie("user_id")
-    deleteCookie("user_email")
-  }
-
   const loadDatabaseInfo = async () => {
     try {
-      const token = getCookie("access_token")
-      if (!token) {
-        clearAllCookies()
-        router.push("/")
-        return
-      }
-      const data = await apiClient.get("/database/info", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
+      const data = await apiClient.get("/database/info")
       setDatabaseInfo(data)
     } catch (err: any) {
       console.error("Failed to load database info:", err)
       if (err.message && err.message.includes("401")) {
-        clearAllCookies()
         router.push("/")
       }
     }
@@ -146,17 +109,9 @@ export default function ChatPage() {
     setError("")
 
     try {
-      const token = getCookie("access_token")
-      if (!token) {
-        clearAllCookies()
-        router.push("/")
-        return
-      }
       const data: ChatResponse = await apiClient.post("/chat", {
         message: messageToSend,
         session_id: currentSessionId,
-      }, {
-        Authorization: `Bearer ${token}`,
       })
 
       if (!currentSessionId) {
@@ -193,7 +148,6 @@ export default function ChatPage() {
     } catch (err: any) {
       console.error("Failed to send message:", err)
       if (err.message && err.message.includes("401")) {
-        clearAllCookies()
         router.push("/")
       } else {
         setError(err.message || "Failed to send message")
