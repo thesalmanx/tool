@@ -184,6 +184,9 @@ def run_scraping_script(user_id: int):
             write_progress_file("running", 0, "Initializing", 0)
         except:
             pass
+        # print the current working directory
+        print('--------------------',os.getcwd())
+
 
         # Start the scraper script
         script_path = "scrape.py"
@@ -1890,6 +1893,7 @@ async def get_api_info():
 
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "partner8-frontend", "out")
 
+
 @app.get("/dashboard")
 async def serve_dashboard():
     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
@@ -1909,5 +1913,5 @@ app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000,workers=4, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info")
 
