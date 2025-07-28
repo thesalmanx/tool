@@ -187,7 +187,7 @@ def run_scraping_script(user_id: int):
         except:
             pass
         # print the current working directory
-        print('--------------------',os.getcwd())
+   
 
 
         # Start the scraper script
@@ -203,6 +203,7 @@ def run_scraping_script(user_id: int):
                 universal_newlines=True
             )
         except Exception as e:
+            print(f"Error starting scraping script: {e}")
             logger.error(f"Error starting scraping script: {e}")
             scraping_status.status = "failed"
 
