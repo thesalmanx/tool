@@ -7,7 +7,6 @@ export const setCookie = (name: string, value: string, days: number = 7) => {
     expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000)
     // Encode the value when setting
     document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;samesite=lax`
-    console.log(`Cookie set: ${name}`)
   } catch (error) {
     console.error('Error setting cookie:', error)
   }
@@ -42,7 +41,6 @@ export const clearAuthCookies = () => {
   try {
     const authCookies = ["access_token", "username", "user_role", "user_id", "user_email"]
     authCookies.forEach(cookie => deleteCookie(cookie))
-    console.log("Auth cookies cleared")
   } catch (error) {
     console.error('Error clearing auth cookies:', error)
   }

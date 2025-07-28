@@ -11,37 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 // For production, you'll need to define your API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://investmentapp.partners8.com"
 
-// Enhanced cookie utility functions with better error handling
-const setCookie = (name: string, value: string, days: number = 7) => {
-  try {
-    const expires = new Date()
-    expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000)
-    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;samesite=lax`
-    console.log(`Cookie set: ${name}`)
-  } catch (error) {
-    console.error('Error setting cookie:', error)
-  }
-}
-
-const deleteCookie = (name: string) => {
-  try {
-    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=lax`
-  } catch (error) {
-    console.error('Error deleting cookie:', error)
-  }
-}
-
-// Clear all auth-related storage
-const clearAuthData = () => {
-  try {
-    // Clear cookies
-    const authCookies = ["access_token", "username", "user_role", "user_id", "user_email"]
-    authCookies.forEach(cookie => deleteCookie(cookie))
-    console.log("Auth data cleared")
-  } catch (error) {
-    console.error('Error clearing auth data:', error)
-  }
-}
+import { setCookie, clearAuthCookies } from "../utils/cookies";
 
 export default function LoginForm() {
   const [loginData, setLoginData] = useState({ username: "", password: "" })
@@ -59,14 +29,13 @@ export default function LoginForm() {
 
     try {
       // Clear any existing auth data first
-      clearAuthData()
+      clearAuthCookies()
 
       // Use URLSearchParams for proper form encoding
       const formData = new URLSearchParams()
       formData.append("username", loginData.username.trim())
       formData.append("password", loginData.password)
 
-      console.log('Attempting login to:', `${API_BASE_URL}/token`)
 
       const response = await fetch(`${API_BASE_URL}/token`, {
         method: "POST",
@@ -76,11 +45,9 @@ export default function LoginForm() {
         body: formData.toString(),
       })
 
-      console.log('Response status:', response.status)
 
       if (response.ok) {
         const data = await response.json()
-        console.log('Login successful, received data:', { ...data, access_token: '[REDACTED]' })
 
         if (!data.access_token || !data.user) {
           throw new Error('Invalid response format from server')
@@ -97,7 +64,6 @@ export default function LoginForm() {
           setCookie("user_role", userInfo.role, 7)
           setCookie("user_id", userInfo.id.toString(), 7)
           setCookie("user_email", userInfo.email, 7)
-          console.log('All cookies set successfully')
         } catch (cookieError) {
           console.error('Error setting cookies:', cookieError)
           throw new Error('Failed to save authentication data')
@@ -110,7 +76,6 @@ export default function LoginForm() {
         
         // Small delay to show success message, then redirect
         setTimeout(() => {
-          console.log('Redirecting to dashboard...')
           router.push("/dashboard")
         }, 1000)
 
@@ -165,7 +130,6 @@ export default function LoginForm() {
     }
 
     try {
-      console.log('Attempting signup to:', `${API_BASE_URL}/signup`)
 
       const response = await fetch(`${API_BASE_URL}/signup`, {
         method: "POST",
@@ -179,7 +143,6 @@ export default function LoginForm() {
         }),
       })
 
-      console.log('Signup response status:', response.status)
 
       if (response.ok) {
         const data = await response.json()

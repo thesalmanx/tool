@@ -18,12 +18,22 @@ interface UserInfo {
   role: string
 }
 
-// Helper function for cookie management
+// Helper function for cookie management with proper decoding
 const getCookie = (name: string): string | null => {
-  const value = `; ${document.cookie}`
-  const parts = value.split(`; ${name}=`)
-  if (parts.length === 2) return parts.pop()?.split(';').shift() || null
-  return null
+  if (typeof document === 'undefined') return null;
+  try {
+    const value = `; ${document.cookie}`
+    const parts = value.split(`; ${name}=`)
+    if (parts.length === 2) {
+      const cookieValue = parts.pop()?.split(';').shift() || ''
+      // Properly decode the cookie value
+      return decodeURIComponent(cookieValue)
+    }
+    return null
+  } catch (error) {
+    console.error('Error getting cookie:', error)
+    return null
+  }
 }
 
 const deleteCookie = (name: string) => {
@@ -45,17 +55,18 @@ export default function DashboardPage() {
       const role = getCookie("user_role")
       const id = getCookie("user_id")
 
+
       if (!username || !email || !role || !id) {
         // If cookies are missing, redirect to home
         router.push("/")
         return
       }
 
-      // Set user info from cookies (no need to fetch from backend again)
+      // Set user info from cookies (properly decoded)
       setUserInfo({
         id,
         username,
-        email,
+        email, // This should now show @ instead of %40
         role
       })
       
@@ -151,11 +162,15 @@ export default function DashboardPage() {
             {/* Account Information */}
             <Card>
               <CardHeader>
-                <CardTitle>Account Information</CardTitle>
-                <CardDescription>Your account details and current session</CardDescription>
+                <CardTitle>Your Info</CardTitle>
+                <CardDescription>Details of the currently logged-in user</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">User ID</Label>
+                    <p className="text-sm text-gray-900">{userInfo.id}</p>
+                  </div>
                   <div>
                     <Label className="text-sm font-medium text-gray-700">Username</Label>
                     <p className="text-sm text-gray-900">{userInfo.username}</p>

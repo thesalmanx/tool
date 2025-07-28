@@ -19,7 +19,9 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
+from fastapi import Request
 from google import genai
+from fastapi import Body
 from google.genai import types
 from dotenv import load_dotenv
 import logging
@@ -1342,6 +1344,108 @@ async def chat(
 
 # Scraping endpoints
 # 7. Enhanced get_scraping_status endpoint
+
+@app.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a user account (Admin only)"""
+    try:
+        # Find the user to delete
+        user_to_delete = db.query(User).filter(User.id == user_id).first()
+        if not user_to_delete:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Security checks
+        # 1. Prevent self-deletion
+        if user_to_delete.id == current_user.id:
+            raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+        # 2. Only super_admin can delete other admins
+        if user_to_delete.role == "admin" and current_user.role != "super_admin":
+            raise HTTPException(
+                status_code=403, 
+                detail="Only super admins can delete admin accounts"
+            )
+
+        # 3. Prevent deletion of the last admin/super_admin
+        if user_to_delete.role in ["admin", "super_admin"]:
+            admin_count = db.query(User).filter(User.role.in_(["admin", "super_admin"])).count()
+            if admin_count <= 1:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Cannot delete the last admin account. System must have at least one admin."
+                )
+
+        # Store user info for logging before deletion
+        deleted_username = user_to_delete.username
+        deleted_role = user_to_delete.role
+
+        # Delete related data first (if any)
+        # Delete chat sessions and messages
+        try:
+            chat_sessions = db.query(ChatSession).filter(ChatSession.user_id == user_id).all()
+            for session in chat_sessions:
+                # Delete messages in this session
+                db.query(ChatMessage).filter(ChatMessage.session_id == session.id).delete()
+                # Delete the session
+                db.delete(session)
+            
+            logger.info(f"Deleted {len(chat_sessions)} chat sessions for user {deleted_username}")
+        except Exception as e:
+            logger.warning(f"Error deleting chat data for user {user_id}: {e}")
+            # Continue with user deletion even if chat cleanup fails
+
+        # Delete scraping logs started by this user (optional - you might want to keep these for auditing)
+        try:
+            scraping_logs_deleted = db.query(ScrapingLog).filter(ScrapingLog.started_by == user_id).delete()
+            logger.info(f"Deleted {scraping_logs_deleted} scraping logs for user {deleted_username}")
+        except Exception as e:
+            logger.warning(f"Error deleting scraping logs for user {user_id}: {e}")
+
+        # Delete the user
+        db.delete(user_to_delete)
+        db.commit()
+
+        logger.info(f"Admin {current_user.username} deleted user {deleted_username} (role: {deleted_role})")
+
+        return {
+            "message": f"User '{deleted_username}' deleted successfully",
+            "deleted_user": {
+                "username": deleted_username,
+                "role": deleted_role
+            },
+            "deleted_by": current_user.username
+        }
+
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404, 403, etc.)
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting user {user_id}: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+    
+
+
+@app.get("/admin/deletion_audit")
+async def get_deletion_audit(
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get audit log of deleted users (from application logs)"""
+    # Since we're logging deletions, you could read from log files
+    # or implement a separate audit table for better tracking
+    
+    # For now, return a simple response
+    return {
+        "message": "User deletion audit logs are available in application logs",
+        "note": "Consider implementing a dedicated audit table for better tracking"
+    }
+
+
 @app.get("/scraping_status")
 async def get_scraping_status(current_user: dict = Depends(get_current_user)):
     """Get current scraping status with progress information"""
@@ -1913,5 +2017,5 @@ app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info",reload=True)
 

@@ -6,11 +6,9 @@ export async function middleware(request: NextRequest) {
   const isPublicPath = path === "/" || path === "/login" || path === "/signup"
 
   const token = request.cookies.get("access_token")?.value
-  console.log(`Middleware: ${path}, Token: ${token ? "exists" : "none"}`)
 
   // If no token and trying to access protected route
   if (!token && !isPublicPath) {
-    console.log("No token, redirecting to /")
     return NextResponse.redirect(new URL("/", request.nextUrl))
   }
 
@@ -18,7 +16,6 @@ export async function middleware(request: NextRequest) {
   if (token) {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
-      console.log(`Verifying token with backend: ${backendUrl}/verify-token`)
 
       const verificationResponse = await fetch(`${backendUrl}/verify-token`, {
         headers: {
@@ -30,11 +27,9 @@ export async function middleware(request: NextRequest) {
 
       if (verificationResponse.ok) {
         const data = await verificationResponse.json()
-        console.log("Token verified successfully for user:", data.user.username)
 
         // If authenticated and trying to access public path, redirect to dashboard
         if (isPublicPath) {
-          console.log("Authenticated user on public path, redirecting to dashboard")
           return NextResponse.redirect(new URL("/dashboard", request.nextUrl))
         }
 

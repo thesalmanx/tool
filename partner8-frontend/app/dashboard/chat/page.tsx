@@ -12,7 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Send, Bot, User, Database, Search, ExternalLink, BarChart3, Download, FileText, Table, FileSpreadsheet } from "lucide-react"
+import { Send, Bot, User, Database, Search, ExternalLink, BarChart3, Download, FileText, Table, FileSpreadsheet, Trash2 } from "lucide-react"
 import { apiClient } from "../../../utils/api"
 
 interface Message {

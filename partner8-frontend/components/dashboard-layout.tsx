@@ -5,30 +5,13 @@ import { useState, useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
-import { Home, Users, MessageSquare, LogOut, Menu, Play } from "lucide-react"
+import { Home, Users, MessageSquare, LogOut, Menu, Play, Trash2 } from "lucide-react"
 
 interface DashboardLayoutProps {
   children: React.ReactNode
 }
 
-// Helper functions for cookie management
-const getCookie = (name: string): string | null => {
-  if (typeof document === 'undefined') return null;
-  try {
-    const value = `; ${document.cookie}`
-    const parts = value.split(`; ${name}=`)
-    if (parts.length === 2) return decodeURIComponent(parts.pop()?.split(';').shift() || '')
-    return null
-  } catch (error) {
-    console.error('Error getting cookie:', error)
-    return null
-  }
-}
-
-const deleteCookie = (name: string) => {
-  if (typeof document === 'undefined') return;
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
-}
+import { getCookie, clearAuthCookies } from "../utils/cookies";
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [userRole, setUserRole] = useState("")
@@ -39,15 +22,14 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   useEffect(() => {
     const initializeDashboard = () => {
-      console.log("DashboardLayout: Initializing dashboard...")
+      ("DashboardLayout: Initializing dashboard...")
       
       // Get user data from cookies (middleware already verified the token)
       const usernameFromCookie = getCookie("username")
       const roleFromCookie = getCookie("user_role")
       
       if (!usernameFromCookie || !roleFromCookie) {
-        console.log("DashboardLayout: Missing user data in cookies, redirecting to /")
-        clearAllCookies()
+        clearAuthCookies()
         router.replace("/")
         return
       }
@@ -58,28 +40,22 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       // Handle role-based redirection
       if (roleFromCookie === 'user') {
         if (pathname === '/dashboard/scraping' || pathname === '/dashboard/users') {
-          console.log("DashboardLayout: User trying to access admin page, redirecting to chat")
           router.replace("/dashboard/chat")
           return
         }
       }
       
       setIsLoading(false)
-      console.log("DashboardLayout: Dashboard initialized successfully")
     }
 
     initializeDashboard()
   }, [router, pathname])
 
-  const clearAllCookies = () => {
-    const authCookies = ["access_token", "username", "user_role", "user_id", "user_email"]
-    authCookies.forEach(cookie => deleteCookie(cookie))
-  }
+  
 
   const handleLogout = () => {
-    console.log("DashboardLayout: Logging out...")
     try {
-      clearAllCookies()
+      clearAuthCookies()
       router.replace("/")
     } catch (error) {
       console.error("Logout error:", error)
