@@ -1,3 +1,5 @@
+// Updates for partner8-frontend/app/dashboard/scraping/page.tsx
+
 "use client"
 
 import { useEffect, useState } from "react"
@@ -21,6 +23,7 @@ interface ScrapingStatus {
   current_step?: number
   total_steps?: number
   step_name?: string
+  progress_percentage?: number
 }
 
 interface ScrapingLog {
@@ -50,11 +53,11 @@ export default function ScrapingPage() {
   const [logs, setLogs] = useState<ScrapingLog[]>([])
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
-  const itemsPerPage = 10 // 10 entries at a time
+  const itemsPerPage = 10
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
-  const [isPaused, setIsPaused] = useState(false)
+  const [lastUpdateTime, setLastUpdateTime] = useState<Date>(new Date())
   const router = useRouter()
 
   useEffect(() => {
@@ -66,19 +69,30 @@ export default function ScrapingPage() {
       return
     }
 
+    // Initial fetch
     fetchStatus()
     fetchLogs()
 
-    // Poll status every 3 seconds when running
+    // Set up polling with more aggressive refresh for running status
     const interval = setInterval(() => {
       fetchStatus()
+      
+      // Also refresh logs if status changed recently
       if (status.status === "completed" || status.status === "failed") {
-        fetchLogs() // Refresh logs when status changes
+        fetchLogs()
       }
-    }, 3000)
+    }, 2000) // Poll every 2 seconds for more responsive updates
 
     return () => clearInterval(interval)
-  }, [router, status.status])
+  }, [router])
+
+  // Additional effect to handle status changes
+  useEffect(() => {
+    if (status.status === "completed" || status.status === "failed" || status.status === "stopped") {
+      // Refresh logs when scraping completes
+      setTimeout(() => fetchLogs(), 1000)
+    }
+  }, [status.status])
 
   const clearAllCookies = () => {
     deleteCookie("access_token")
@@ -96,18 +110,31 @@ export default function ScrapingPage() {
         router.push("/")
         return
       }
+
       const data = await apiClient.get("/scraping_status", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
-      setStatus(data)
-      setIsPaused(data.status === "paused")
+      
+      // Only update if the status actually changed or if it's been more than 5 seconds
+      const now = new Date()
+      const timeSinceLastUpdate = now.getTime() - lastUpdateTime.getTime()
+      
+      if (JSON.stringify(data) !== JSON.stringify(status) || timeSinceLastUpdate > 5000) {
+        setStatus(data)
+        setLastUpdateTime(now)
+        console.log("Status updated:", data) // Debug log
+      }
+      
     } catch (err: any) {
       console.error("Failed to fetch status:", err)
       if (err.message && err.message.includes("401")) {
         clearAllCookies()
         router.push("/")
+      } else {
+        // Don't show error for status fetch failures unless it's critical
+        console.warn("Status fetch failed, will retry:", err.message)
       }
     }
   }
@@ -154,8 +181,13 @@ export default function ScrapingPage() {
       })
 
       setSuccess("Scraping started successfully")
-      fetchStatus()
-      fetchLogs()
+      
+      // Immediately fetch status to update UI
+      setTimeout(() => {
+        fetchStatus()
+        fetchLogs()
+      }, 1000)
+      
       setTimeout(() => setSuccess(""), 3000)
     } catch (err: any) {
       console.error("Failed to start scraping:", err)
@@ -187,8 +219,13 @@ export default function ScrapingPage() {
       })
 
       setSuccess("Stop signal sent successfully")
-      fetchStatus()
-      fetchLogs()
+      
+      // Immediately fetch status to update UI
+      setTimeout(() => {
+        fetchStatus()
+        fetchLogs()
+      }, 1000)
+      
       setTimeout(() => setSuccess(""), 3000)
     } catch (err: any) {
       console.error("Failed to stop scraping:", err)
@@ -202,10 +239,6 @@ export default function ScrapingPage() {
       setIsLoading(false)
     }
   }
-
-
-
-  
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -242,6 +275,9 @@ export default function ScrapingPage() {
   }
 
   const calculateProgress = () => {
+    if (status.progress_percentage) {
+      return status.progress_percentage
+    }
     if (status.current_step && status.total_steps) {
       return (status.current_step / status.total_steps) * 100
     }
@@ -251,7 +287,7 @@ export default function ScrapingPage() {
   const getStepNames = () => {
     const steps = [
       "Download Zillow Data",
-      "Merge Zillow Data",
+      "Merge Zillow Data", 
       "Fetch HUD Data",
       "Fetch NAR Data",
       "Calculate Ratios",
@@ -260,11 +296,31 @@ export default function ScrapingPage() {
     return steps
   }
 
+  const formatDateTime = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleString()
+    } catch {
+      return dateString
+    }
+  }
+
+  const isActivelyRunning = status.status === "running"
+  const canStart = status.status === "idle" || status.status === "completed" || status.status === "failed" || status.status === "stopped"
+  const canStop = status.status === "running" || status.status === "paused"
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Scraping Control</h1>
+          <p className="text-gray-600">
+            Current Status: <strong>{status.status}</strong> 
+            {lastUpdateTime && (
+              <span className="text-sm text-gray-500 ml-2">
+                (Updated: {lastUpdateTime.toLocaleTimeString()})
+              </span>
+            )}
+          </p>
         </div>
 
         {error && (
@@ -285,6 +341,11 @@ export default function ScrapingPage() {
               <CardTitle className="flex items-center space-x-2">
                 {getStatusIcon(status.status)}
                 <span>Current Status</span>
+                {isActivelyRunning && (
+                  <Badge variant="default" className="animate-pulse ml-2">
+                    LIVE
+                  </Badge>
+                )}
               </CardTitle>
               <CardDescription>Real-time scraping process status with progress tracking</CardDescription>
             </CardHeader>
@@ -295,18 +356,28 @@ export default function ScrapingPage() {
                   <Badge variant={getStatusColor(status.status)}>
                     {status.status.charAt(0).toUpperCase() + status.status.slice(1)}
                   </Badge>
+                  {status.records_processed !== undefined && status.records_processed > 0 && (
+                    <Badge variant="outline" className="ml-2">
+                      {status.records_processed} records
+                    </Badge>
+                  )}
                 </div>
 
-                {/* Progress Bar */}
-                {status.status === "running" && status.current_step && status.total_steps && (
+                {/* Progress Bar - Show for running or recently completed */}
+                {(isActivelyRunning || (status.current_step && status.total_steps)) && (
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Progress</span>
-                      <span>{status.current_step}/{status.total_steps} steps</span>
+                      <span>
+                        {status.current_step || 0}/{status.total_steps || 6} steps 
+                        ({Math.round(calculateProgress())}%)
+                      </span>
                     </div>
                     <Progress value={calculateProgress()} className="w-full" />
                     {status.step_name && (
-                      <p className="text-sm text-gray-600">Current: {status.step_name}</p>
+                      <p className="text-sm text-gray-600">
+                        <strong>Current:</strong> {status.step_name}
+                      </p>
                     )}
                   </div>
                 )}
@@ -314,33 +385,28 @@ export default function ScrapingPage() {
                 {status.started_at && (
                   <div>
                     <span className="text-sm font-medium">Started:</span>
-                    <p className="text-sm text-gray-600 mt-1">{new Date(status.started_at).toLocaleString()}</p>
+                    <p className="text-sm text-gray-600 mt-1">{formatDateTime(status.started_at)}</p>
                   </div>
                 )}
 
                 {status.completed_at && (
                   <div>
                     <span className="text-sm font-medium">Completed:</span>
-                    <p className="text-sm text-gray-600 mt-1">{new Date(status.completed_at).toLocaleString()}</p>
-                  </div>
-                )}
-
-                {status.records_processed !== undefined && status.records_processed > 0 && (
-                  <div>
-                    <span className="text-sm font-medium">Records Processed:</span>
-                    <p className="text-sm text-gray-600 mt-1">{status.records_processed.toLocaleString()}</p>
+                    <p className="text-sm text-gray-600 mt-1">{formatDateTime(status.completed_at)}</p>
                   </div>
                 )}
 
                 {status.error_message && (
                   <div>
                     <span className="text-sm font-medium text-red-600">Error:</span>
-                    <p className="text-sm text-red-600 mt-1">{status.error_message}</p>
+                    <p className="text-sm text-red-600 mt-1 bg-red-50 p-2 rounded">
+                      {status.error_message}
+                    </p>
                   </div>
                 )}
 
                 {/* Pipeline Steps Overview */}
-                {(status.status === "running" || status.status === "paused") && (
+                {isActivelyRunning && status.current_step && (
                   <div className="mt-4">
                     <span className="text-sm font-medium">Pipeline Steps:</span>
                     <div className="mt-2 space-y-1">
@@ -382,27 +448,23 @@ export default function ScrapingPage() {
           <Card>
             <CardHeader>
               <CardTitle>Enhanced Controls</CardTitle>
-              <CardDescription>Start, stop, pause, or resume the scraping process</CardDescription>
+              <CardDescription>Start, stop, or monitor the scraping process</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 <Button
                   onClick={startScraping}
-                  disabled={isLoading || status.status === "running" || status.status === "paused"}
+                  disabled={isLoading || !canStart}
                   className="w-full"
-                  variant={status.status === "running" ? "secondary" : "default"}
+                  variant={canStart ? "default" : "secondary"}
                 >
                   <Play className="h-4 w-4 mr-2" />
-                  {status.status === "running" || status.status === "paused" ? "Pipeline Active" : "Start Scraping"}
+                  {canStart ? "Start Scraping" : `Pipeline ${status.status}`}
                 </Button>
-
-               
-
-                
 
                 <Button
                   onClick={stopScraping}
-                  disabled={isLoading || (status.status !== "running" && status.status !== "paused")}
+                  disabled={isLoading || !canStop}
                   variant="destructive"
                   className="w-full"
                 >
@@ -419,16 +481,35 @@ export default function ScrapingPage() {
                   className="w-full bg-transparent"
                   disabled={isLoading}
                 >
-                  <RefreshCw className="h-4 w-4 mr-2" />
+                  <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                   Refresh Status
                 </Button>
               </div>
 
-             
+              {/* Quick Status Info */}
+              <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                <div className="text-sm space-y-1">
+                  <div className="flex justify-between">
+                    <span>Last Update:</span>
+                    <span className="font-mono text-xs">
+                      {lastUpdateTime.toLocaleTimeString()}
+                    </span>
+                  </div>
+                  {isActivelyRunning && status.records_processed && (
+                    <div className="flex justify-between">
+                      <span>Records Processed:</span>
+                      <span className="font-medium">
+                        {status.records_processed.toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>
 
+        {/* Rest of the component remains the same... */}
         <Card>
           <CardHeader>
             <CardTitle>Scraping History</CardTitle>
@@ -436,51 +517,53 @@ export default function ScrapingPage() {
           </CardHeader>
           <CardContent>
             {logs.length > 0 ? (
-              <><Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Started</TableHead>
-                    <TableHead>Completed</TableHead>
-                    <TableHead>Records</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead>Details</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logs.map((log) => (
-                    <TableRow key={log.id}>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          {getStatusIcon(log.status)}
-                          <Badge variant={getStatusColor(log.status)}>
-                            {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell>{new Date(log.started_at).toLocaleString()}</TableCell>
-                      <TableCell>{log.completed_at ? new Date(log.completed_at).toLocaleString() : "-"}</TableCell>
-                      <TableCell>{log.records_processed ? log.records_processed.toLocaleString() : "0"}</TableCell>
-                      <TableCell>
-                        {log.completed_at
-                          ? `${Math.round(
-                            (new Date(log.completed_at).getTime() - new Date(log.started_at).getTime()) / 1000
-                          )}s`
-                          : "-"}
-                      </TableCell>
-                      <TableCell>
-                        {log.error_message && (
-                          <span className="text-xs text-red-600 truncate max-w-xs" title={log.error_message}>
-                            {log.error_message.length > 50
-                              ? `${log.error_message.substring(0, 50)}...`
-                              : log.error_message}
-                          </span>
-                        )}
-                      </TableCell>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Started</TableHead>
+                      <TableHead>Completed</TableHead>
+                      <TableHead>Records</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead>Details</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table><div className="flex justify-between items-center mt-4">
+                  </TableHeader>
+                  <TableBody>
+                    {logs.map((log) => (
+                      <TableRow key={log.id}>
+                        <TableCell>
+                          <div className="flex items-center space-x-2">
+                            {getStatusIcon(log.status)}
+                            <Badge variant={getStatusColor(log.status)}>
+                              {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell>{formatDateTime(log.started_at)}</TableCell>
+                        <TableCell>{log.completed_at ? formatDateTime(log.completed_at) : "-"}</TableCell>
+                        <TableCell>{log.records_processed ? log.records_processed.toLocaleString() : "0"}</TableCell>
+                        <TableCell>
+                          {log.completed_at
+                            ? `${Math.round(
+                              (new Date(log.completed_at).getTime() - new Date(log.started_at).getTime()) / 1000
+                            )}s`
+                            : "-"}
+                        </TableCell>
+                        <TableCell>
+                          {log.error_message && (
+                            <span className="text-xs text-red-600 truncate max-w-xs" title={log.error_message}>
+                              {log.error_message.length > 50
+                                ? `${log.error_message.substring(0, 50)}...`
+                                : log.error_message}
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex justify-between items-center mt-4">
                   <Button
                     onClick={() => fetchLogs(currentPage - 1)}
                     disabled={currentPage === 1 || isLoading}
@@ -500,7 +583,8 @@ export default function ScrapingPage() {
                   >
                     Next
                   </Button>
-                </div></>
+                </div>
+              </>
             ) : (
               <div className="text-center py-8 text-gray-500">
                 <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -511,39 +595,41 @@ export default function ScrapingPage() {
           </CardContent>
         </Card>
 
-        {/* Real-time Activity Monitor */}
-        {status.status === "running" && (
+        {/* Live Activity Monitor for Running Status */}
+        {isActivelyRunning && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <Activity className="h-5 w-5 animate-pulse text-green-500" />
                 <span>Live Activity Monitor</span>
+                <Badge variant="default" className="animate-pulse">
+                  ACTIVE
+                </Badge>
               </CardTitle>
               <CardDescription>Real-time pipeline activity and progress</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Pipeline Status</span>
-                  <Badge variant="default" className="animate-pulse">
-                    <Activity className="h-3 w-3 mr-1" />
-                    Active
-                  </Badge>
-                </div>
-                
-                {status.current_step && status.total_steps && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-blue-50 p-3 rounded-lg">
-                      <div className="text-sm font-medium text-blue-800">Current Step</div>
-                      <div className="text-lg font-bold text-blue-600">
-                        {status.current_step} / {status.total_steps}
-                      </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-blue-50 p-3 rounded-lg">
+                    <div className="text-sm font-medium text-blue-800">Current Step</div>
+                    <div className="text-lg font-bold text-blue-600">
+                      {status.current_step || 0} / {status.total_steps || 6}
                     </div>
-                    <div className="bg-green-50 p-3 rounded-lg">
-                      <div className="text-sm font-medium text-green-800">Progress</div>
-                      <div className="text-lg font-bold text-green-600">
-                        {Math.round(calculateProgress())}%
-                      </div>
+                  </div>
+                  <div className="bg-green-50 p-3 rounded-lg">
+                    <div className="text-sm font-medium text-green-800">Progress</div>
+                    <div className="text-lg font-bold text-green-600">
+                      {Math.round(calculateProgress())}%
+                    </div>
+                  </div>
+                </div>
+
+                {status.records_processed && status.records_processed > 0 && (
+                  <div className="bg-yellow-50 p-3 rounded-lg">
+                    <div className="text-sm font-medium text-yellow-800">Records Processed</div>
+                    <div className="text-lg font-bold text-yellow-600">
+                      {status.records_processed.toLocaleString()}
                     </div>
                   </div>
                 )}
@@ -551,7 +637,6 @@ export default function ScrapingPage() {
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <div className="text-sm font-medium mb-2">Quick Actions</div>
                   <div className="flex space-x-2">
-                    
                     <Button size="sm" variant="outline" onClick={stopScraping} disabled={isLoading}>
                       <Square className="h-3 w-3 mr-1" />
                       Stop
