@@ -11,8 +11,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Send, Bot, User, Database, Search, ExternalLink, BarChart3, Download, FileText, Table, FileSpreadsheet, Trash2 } from "lucide-react"
+import { Send, Bot, User, Database, Search, ExternalLink, BarChart3, FileText, Table, FileSpreadsheet, } from "lucide-react"
 import { apiClient } from "../../../utils/api"
 
 interface Message {
@@ -257,9 +256,9 @@ export default function ChatPage() {
     const headers = Object.keys(results[0])
 
     return (
-      <div className="mt-4 space-y-4 w-full overflow-hidden">
+      <div className="mt-4 space-y-4 ">
         {/* Data Table Section */}
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="w-full max-w-full bg-white border border-gray-200 rounded-lg overflow-hidden">
           <div className="border-b border-gray-200 p-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center space-x-2 flex-wrap">
@@ -298,7 +297,7 @@ export default function ChatPage() {
           </div>
 
           <div className="overflow-x-auto max-h-96">
-            <table className="w-full text-xs min-w-full">
+            <table className="w-auto min-w-0 table-auto text-xs min-w-full">
               <thead className="bg-gray-50 sticky top-0">
                 <tr>
                   {headers.map((header) => (
@@ -435,121 +434,128 @@ export default function ChatPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col p-0 min-h-0 overflow-hidden">
-              {/* Chat Messages */}
-              <ScrollArea className="flex-1 p-4 overflow-hidden">
-                <div className="space-y-6">
-                  {messages.map((message) => (
-                    <div key={message.id} className="w-full overflow-hidden">
-                      {/* Regular Chat Message */}
-                      <div className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"} w-full`}>
-                        <div
-                          className={`max-w-[80%] min-w-0 rounded-lg p-3 overflow-hidden ${
-                            message.sender === "user" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900"
-                          }`}
-                        >
-                          <div className="flex items-start space-x-2 min-w-0">
-                            {message.sender === "bot" && <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />}
-                            {message.sender === "user" && (
-                              <User className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-100" />
-                            )}
-                            <div className="flex-1 min-w-0 overflow-hidden">
-                              {message.queryType !== "data_query" && !message.isGrounded && message.queryType !== "grounded" && message.queryType !== "grounded_fallback" && (
-                                <p className="text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">
-                                  {message.content}
-                                </p>
-                              )}
-
-                              {/* Query Type Badges */}
-                              <div className="mt-2 flex flex-wrap gap-1">
-                                {message.queryType === "data_query" && (
-                                  <Badge variant="default" className="text-xs">
-                                    <Database className="h-3 w-3 mr-1" />
-                                    Data Query
-                                  </Badge>
-                                )}
-                                {message.isGrounded && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    <Search className="h-3 w-3 mr-1" />
-                                    Grounded
-                                  </Badge>
-                                )}
-                                {message.queryType === "grounded_fallback" && (
-                                  <Badge variant="outline" className="text-xs">
-                                    Search Fallback
-                                  </Badge>
-                                )}
-                              </div>
-
-                              <p
-                                className={`text-xs mt-2 ${
-                                  message.sender === "user" ? "text-blue-100" : "text-gray-500"
-                                }`}
-                              >
-                                {formatTime(message.timestamp)}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Render appropriate result type based on query type */}
-                      {message.queryType === "data_query" ? 
-                        renderDataQueryResult(message) : 
-                        renderGroundedSearchResult(message)
-                      }
-                    </div>
-                  ))}
-                  
-                  {isLoading && (
-                    <div className="flex justify-start w-full">
-                      <div className="bg-gray-100 rounded-lg p-3 max-w-[80%] overflow-hidden">
-                        <div className="flex items-center space-x-2">
-                          <Bot className="h-4 w-4 flex-shrink-0" />
-                          <div className="flex space-x-1">
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                            <div
-                              className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                              style={{ animationDelay: "0.1s" }}
-                            ></div>
-                            <div
-                              className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                              style={{ animationDelay: "0.2s" }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
+  {/* Chat Messages */}
+  <ScrollArea className="flex-1 p-4">
+    <div className="space-y-6 w-full max-w-screen-lg mx-auto overflow-auto">
+      {messages.map((message) => (
+        <div key={message.id} className="w-full min-w-0">
+          {/* Regular Chat Message */}
+          <div className={`flex ${message.sender === "user" ? "justify-end" : "justify-start"} w-full min-w-0`}>
+            <div
+              className={`max-w-[80%] min-w-0 rounded-lg p-3 overflow-auto ${
+                message.sender === "user" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900"
+              }`}
+            >
+              <div className="flex items-start space-x-2 min-w-0">
+                {message.sender === "bot" && <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />}
+                {message.sender === "user" && (
+                  <User className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-100" />
+                )}
+                <div className="flex-1 min-w-0">
+                  {message.queryType !== "data_query" && !message.isGrounded && message.queryType !== "grounded" && message.queryType !== "grounded_fallback" && (
+                    <div className="overflow-auto">
+                      <p className="text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">
+                        {message.content}
+                      </p>
                     </div>
                   )}
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
 
-              {/* Chat Input */}
-              <div className="border-t p-4 flex-shrink-0">
-                <div className="flex space-x-2 w-full min-w-0">
-                  <Input
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder="Ask me anything about real estate data or general questions..."
-                    disabled={isLoading}
-                    className="flex-1 min-w-0"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        sendChatMessage(e)
-                      }
-                    }}
-                  />
-                  <Button 
-                    onClick={sendChatMessage} 
-                    disabled={isLoading || !inputMessage.trim()}
-                    className="flex-shrink-0"
+                  {/* Query Type Badges */}
+                  <div className="mt-2 flex flex-wrap gap-1 overflow-x-auto">
+                    {message.queryType === "data_query" && (
+                      <Badge variant="default" className="text-xs flex-shrink-0">
+                        <Database className="h-3 w-3 mr-1" />
+                        Data Query
+                      </Badge>
+                    )}
+                    {message.isGrounded && (
+                      <Badge variant="secondary" className="text-xs flex-shrink-0">
+                        <Search className="h-3 w-3 mr-1" />
+                        Grounded
+                      </Badge>
+                    )}
+                    {message.queryType === "grounded_fallback" && (
+                      <Badge variant="outline" className="text-xs flex-shrink-0">
+                        Search Fallback
+                      </Badge>
+                    )}
+                  </div>
+
+                  <p
+                    className={`text-xs mt-2 ${
+                      message.sender === "user" ? "text-blue-100" : "text-gray-500"
+                    }`}
                   >
-                    <Send className="h-4 w-4" />
-                  </Button>
+                    {formatTime(message.timestamp)}
+                  </p>
                 </div>
               </div>
-            </CardContent>
+            </div>
+          </div>
+
+          {/* Render appropriate result type based on query type */}
+          <div className="w-full">
+  <div className="mt-2 w-full overflow-x-auto">
+            {message.queryType === "data_query" ? 
+              renderDataQueryResult(message) : 
+              renderGroundedSearchResult(message)
+            }
+          </div>
+          </div>
+        </div>
+      ))}
+      
+      {isLoading && (
+        <div className="flex justify-start w-full">
+          <div className="bg-gray-100 rounded-lg p-3 max-w-[80%] overflow-hidden">
+            <div className="flex items-center space-x-2">
+              <Bot className="h-4 w-4 flex-shrink-0" />
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                <div
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "0.1s" }}
+                ></div>
+                <div
+                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "0.2s" }}
+                ></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <div ref={messagesEndRef} />
+    </div>
+  </ScrollArea>
+
+  {/* Chat Input */}
+  <div className="border-t p-4 flex-shrink-0">
+    <div className="flex space-x-2 w-full min-w-0">
+      <Input
+        value={inputMessage}
+        onChange={(e) => setInputMessage(e.target.value)}
+        placeholder="Ask me anything about real estate data or general questions..."
+        disabled={isLoading}
+        className="flex-1 min-w-0"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            sendChatMessage(e)
+          }
+        }}
+      />
+      <Button 
+        onClick={sendChatMessage} 
+        disabled={isLoading || !inputMessage.trim()}
+        className="flex-shrink-0"
+      >
+        <Send className="h-4 w-4" />
+      </Button>
+    </div>
+  </div>
+</CardContent>
+
           </Card>
 
           {/* Sidebar */}

@@ -1118,6 +1118,60 @@ async def search_with_google_grounding(query: str) -> Dict[str, Any]:
                 "grounding_metadata": None
             }
 
+def read_progress_file():
+    """Read progress information from file with better error handling"""
+    try:
+        if os.path.exists(PROGRESS_FILE):
+            with open(PROGRESS_FILE, 'r') as f:
+                data = json.load(f)
+                logger.debug(f"Read progress file: {data}")
+                return data
+        else:
+            logger.debug("Progress file does not exist")
+            return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in progress file: {e}")
+        # Try to remove corrupted file
+        try:
+            os.remove(PROGRESS_FILE)
+            logger.info("Removed corrupted progress file")
+        except:
+            pass
+        return None
+    except Exception as e:
+        logger.error(f"Failed to read progress file: {e}")
+        return None
+
+
+# Also add this helper function to check actual process status
+def check_actual_process_status():
+    """Check if scraping process is actually running"""
+    global scraping_process, scraping_status
+    
+    try:
+        # Check if process object exists and is alive
+        if scraping_process is not None:
+            poll_result = scraping_process.poll()
+            if poll_result is None:
+                # Process is still running
+                return True
+            else:
+                # Process has ended
+                logger.info(f"Scraping process ended with code: {poll_result}")
+                scraping_process = None
+                return False
+        
+        # Check for progress file
+        if os.path.exists(PROGRESS_FILE):
+            progress_data = read_progress_file()
+            if progress_data and progress_data.get("status") == "running":
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error checking process status: {e}")
+        return False
 
 # Utility functions
 def create_first_admin():
@@ -1209,11 +1263,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js development server
-        "http://localhost:8000",  # If frontend is served by FastAPI in development
-        "https://investmentapp.partners8.com" # Your production domain
-    ],
+    allow_origins=["*" ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1223,10 +1273,29 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Initialize scraping tables and cleanup any orphaned processes"""
-    # Reset any running status on startup (in case of server restart)
     global scraping_status
-    scraping_status = ScrapingStatus(status="idle")
-    cleanup_progress_file() # Ensure a clean slate on startup
+    
+    try:
+        # Check if there's actually a running process
+        if check_actual_process_status():
+            logger.info("Found running scraping process on startup")
+            # Read current status from progress file
+            progress_data = read_progress_file()
+            if progress_data:
+                scraping_status.status = progress_data.get("status", "running")
+                scraping_status.current_step = progress_data.get("current_step")
+                scraping_status.step_name = progress_data.get("step_name")
+                scraping_status.records_processed = progress_data.get("records_processed")
+        else:
+            logger.info("No running scraping process found on startup, resetting to idle")
+            scraping_status = ScrapingStatus(status="idle")
+            cleanup_progress_file()
+            
+    except Exception as e:
+        logger.error(f"Error during startup cleanup: {e}")
+        scraping_status = ScrapingStatus(status="idle")
+        cleanup_progress_file()
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1662,39 +1731,69 @@ async def get_deletion_audit(
 @app.get("/scraping_status")
 async def get_scraping_status(current_user: dict = Depends(get_current_user)):
     """Get current scraping status with progress information"""
+    global scraping_status
+    
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # Read latest progress from file if scraping is running
-    # This ensures the most up-to-date progress from the subprocess
-    if scraping_status.status == "running":
+    try:
+        # ALWAYS read from progress file first to get the most current status
         progress_data = read_progress_file()
+        
         if progress_data:
+            # Update global status from progress file
+            scraping_status.status = progress_data.get("status", "idle")
             scraping_status.current_step = progress_data.get("current_step")
             scraping_status.step_name = progress_data.get("step_name")
             scraping_status.records_processed = progress_data.get("records_processed")
             scraping_status.progress_percentage = progress_data.get("progress_percentage")
-            # Update status if changed by the subprocess (e.g., "paused", "completed", "failed")
-            new_status = progress_data.get("status")
-            if new_status and new_status != scraping_status.status:
-                scraping_status.status = new_status
+            
+            # Update timestamps if needed
+            if progress_data.get("timestamp"):
+                try:
+                    scraping_status.started_at = datetime.fromisoformat(progress_data["timestamp"].replace('Z', '+00:00'))
+                except:
+                    pass
+            
             if progress_data.get("error_message"):
                 scraping_status.error_message = progress_data.get("error_message")
+        
+        # If no progress file exists but we think something is running, reset to idle
+        elif scraping_status.status == "running":
+            logger.warning("No progress file found but status was 'running', resetting to idle")
+            scraping_status.status = "idle"
+            scraping_status.current_step = None
+            scraping_status.step_name = None
+            scraping_status.records_processed = None
+            scraping_status.progress_percentage = None
 
-
-    return {
-        "status": scraping_status.status,
-        "started_at": scraping_status.started_at.isoformat() if scraping_status.started_at else None,
-        "completed_at": scraping_status.completed_at.isoformat() if scraping_status.completed_at else None,
-        "records_processed": scraping_status.records_processed,
-        "error_message": scraping_status.error_message,
-        "current_step": scraping_status.current_step,
-        "total_steps": scraping_status.total_steps,
-        "step_name": scraping_status.step_name,
-        "progress_percentage": scraping_status.progress_percentage
-    }
-
-
+        return {
+            "status": scraping_status.status,
+            "started_at": scraping_status.started_at.isoformat() if scraping_status.started_at else None,
+            "completed_at": scraping_status.completed_at.isoformat() if scraping_status.completed_at else None,
+            "records_processed": scraping_status.records_processed,
+            "error_message": scraping_status.error_message,
+            "current_step": scraping_status.current_step,
+            "total_steps": scraping_status.total_steps,
+            "step_name": scraping_status.step_name,
+            "progress_percentage": scraping_status.progress_percentage
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting scraping status: {e}")
+        # Return a safe fallback status
+        return {
+            "status": "idle",
+            "started_at": None,
+            "completed_at": None,
+            "records_processed": 0,
+            "error_message": f"Status check error: {str(e)}",
+            "current_step": None,
+            "total_steps": 6,
+            "step_name": None,
+            "progress_percentage": None
+        }
+    
 @app.get("/scraping_logs")
 async def get_scraping_logs(
     current_user: dict = Depends(get_current_user),
@@ -2208,27 +2307,27 @@ async def get_api_info():
         }
     }
 
-frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "partner8-frontend", "out")
+# frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "partner8-frontend", "out")
 
 
-@app.get("/dashboard")
-async def serve_dashboard():
-    return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
+# @app.get("/dashboard")
+# async def serve_dashboard():
+#     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
 
-@app.get("/dashboard/{path:path}")
-async def serve_dashboard_subpaths(path: str):
-    # This will serve files like /dashboard/chat, /dashboard/users, etc.
-    # It will look for dashboard/chat.html, dashboard/users.html etc.
-    # If not found, it will fall back to dashboard.html
-    file_path = os.path.join(frontend_dir, "dashboard", f"{path}.html")
-    if os.path.exists(file_path):
-        return FileResponse(file_path)
-    return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
+# @app.get("/dashboard/{path:path}")
+# async def serve_dashboard_subpaths(path: str):
+#     # This will serve files like /dashboard/chat, /dashboard/users, etc.
+#     # It will look for dashboard/chat.html, dashboard/users.html etc.
+#     # If not found, it will fall back to dashboard.html
+#     file_path = os.path.join(frontend_dir, "dashboard", f"{path}.html")
+#     if os.path.exists(file_path):
+#         return FileResponse(file_path)
+#     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
 
-# Serve static files from the Next.js build
-app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
+# # Serve static files from the Next.js build
+# app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info",reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8100, log_level="info",reload=True)
 
