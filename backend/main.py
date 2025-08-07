@@ -2307,25 +2307,25 @@ async def get_api_info():
         }
     }
 
-# frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "partner8-frontend", "out")
+frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "partner8-frontend", "out")
 
 
-# @app.get("/dashboard")
-# async def serve_dashboard():
-#     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
+@app.get("/dashboard")
+async def serve_dashboard():
+     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
 
-# @app.get("/dashboard/{path:path}")
-# async def serve_dashboard_subpaths(path: str):
-#     # This will serve files like /dashboard/chat, /dashboard/users, etc.
-#     # It will look for dashboard/chat.html, dashboard/users.html etc.
-#     # If not found, it will fall back to dashboard.html
-#     file_path = os.path.join(frontend_dir, "dashboard", f"{path}.html")
-#     if os.path.exists(file_path):
-#         return FileResponse(file_path)
-#     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
+@app.get("/dashboard/{path:path}")
+async def serve_dashboard_subpaths(path: str):
+     # This will serve files like /dashboard/chat, /dashboard/users, etc.
+     # It will look for dashboard/chat.html, dashboard/users.html etc.
+     # If not found, it will fall back to dashboard.html
+     file_path = os.path.join(frontend_dir, "dashboard", f"{path}.html")
+     if os.path.exists(file_path):
+         return FileResponse(file_path)
+     return FileResponse(os.path.join(frontend_dir, "dashboard.html"))
 
 # # Serve static files from the Next.js build
-# app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
+app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
