@@ -594,6 +594,22 @@ export default function ChatPage() {
               </Card>
             )}
 
+            {/* Ratio Definitions */}
+            <Card className="overflow-hidden">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center">
+                  <BarChart3 className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">Ratio Definitions</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-gray-600">
+                <p><strong>Zillow Ratio:</strong> Zillow Medium Rent divided by Zillow Medium Home Value.</p>
+                <p><strong>NAR Ratio:</strong> Zillow Medium Rent divided by NAR Medium Home Value.</p>
+                <p><strong>ZH Ratio:</strong> HUD Four Bedroom Rent divided by Zillow Medium Home Value.</p>
+                <p><strong>NH Ratio:</strong> HUD Four Bedroom Rent divided by NAR Medium Home Value.</p>
+              </CardContent>
+            </Card>
+
             {/* Sample Queries */}
             {databaseInfo?.available && databaseInfo.sample_queries && (
               <Card className="overflow-hidden">
