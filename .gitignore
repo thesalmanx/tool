@@ -16,3 +16,4 @@ backend/partners8_data.db
 /partner8-frontend/next.config.js
 /partner8-frontend/next-env.d.ts
 /partner8-frontend/next-env.d.ts
+partner8-frontend/out/

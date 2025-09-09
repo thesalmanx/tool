@@ -11,7 +11,7 @@ function getApiUrl() {
   if (currentHost === 'localhost' || currentHost === '127.0.0.1') {
     return `http://localhost:8100`; // Changed from 8100 to 8000
   } else {
-    return `${protocol}//${currentHost}:8100`; // Changed from 8100 to 8000
+    return `${protocol}//${currentHost}`; // Changed from 8100 to 8000
   }
 }
 

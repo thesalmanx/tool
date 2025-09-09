@@ -17,6 +17,9 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "Partners8",
   description: "AI Powerd bot for Partnersß",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
